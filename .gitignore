@@ -1,0 +1,15 @@
+node_modules/
+.env
+.env.*
+!.env.example
+tmp/
+coverage/
+public/models/*
+!public/models/README.md
+*.log
+*.pem
+*.key
+test-results/
+playwright-report/
+biometrics/
+captures/

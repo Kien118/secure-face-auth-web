@@ -1,0 +1,22 @@
+{
+  "name": "secure-face-auth-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Day 1 face identity matching baseline; no liveness or authenticated sessions",
+  "engines": { "node": ">=22.13.0" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "dev": "node --env-file-if-exists=.env --watch src/server.js",
+    "test": "node --test",
+    "lint": "node scripts/check-syntax.js",
+    "models:download": "node scripts/download-models.js",
+    "check:models": "node scripts/check-inference.js"
+  },
+  "dependencies": {
+    "express": "5.3.0",
+    "face-api.js": "0.22.2",
+    "helmet": "8.3.0"
+  },
+  "overrides": { "node-fetch": "2.7.0" }
+}

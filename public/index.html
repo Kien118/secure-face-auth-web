@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Face Authentication — Ngày 1</title>
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/vendor/face-api.min.js"></script>
+  <script type="module" src="/js/app.js"></script>
+</head>
+<body>
+  <main>
+    <h1>Face Authentication — Ngày 1</h1>
+    <p>PoC so khớp danh tính 1:1. <strong>Chưa có liveness/anti-spoofing và chưa cấp phiên đăng nhập.</strong> Ảnh trên điện thoại có thể được so khớp thành công.</p>
+    <p>Chỉ thử với người đã đồng ý. Ảnh/video không được lưu; descriptor chỉ gửi khi bạn bấm tạo template hoặc xác minh, và chỉ nằm trong RAM server đến khi server dừng.</p>
+    <label><input id="consent" type="checkbox"> Tôi đồng ý xử lý khuôn mặt của mình cho thử nghiệm này.</label>
+    <p><label>Tài khoản thử <input id="account" value="demo-user" maxlength="64" pattern="[a-zA-Z0-9_-]{1,64}" autocomplete="off"></label></p>
+    <div class="buttons">
+      <button id="models">Kiểm tra tải model (không dùng camera)</button>
+      <button id="start">Bật camera và tải model</button>
+      <button id="stop" disabled>Dừng camera</button>
+      <button id="enroll" disabled>Tạo template thử nghiệm</button>
+      <button id="verify" disabled>Xác minh 1:1</button>
+    </div>
+    <video id="video" autoplay muted playsinline aria-label="Xem trước webcam"></video>
+    <p id="status" role="status" aria-live="polite" data-code="CAMERA_NOT_STARTED">Chưa cấp quyền / camera chưa bật.</p>
+    <p id="score"></p>
+    <p>Template không được thay thế tự do. Muốn đăng ký lại, dừng và khởi động lại server để xóa dữ liệu RAM.</p>
+    <details>
+      <summary>Checklist thử nghiệm thật — tất cả đang Pending</summary>
+      <ol>
+        <li>Bật camera, tạo template rồi xác minh lại bằng cùng người.</li>
+        <li>Đổi nhẹ tư thế và ánh sáng, xác minh lại.</li>
+        <li>Người khác đã đồng ý claim cùng tài khoản, bấm xác minh.</li>
+        <li>Đưa ảnh đúng người trên điện thoại: giữ yên, di chuyển, nghiêng, đổi độ sáng; xác minh từng lượt.</li>
+        <li>Dừng camera giữa xử lý; thu hồi quyền; thử từ chối quyền từ đầu.</li>
+        <li>Thử khung hình không có mặt và có hai khuôn mặt.</li>
+      </ol>
+      <p>Ghi mã thử, thiết bị, ánh sáng, tư thế, distance và kết quả. Không gửi ảnh hoặc descriptor.</p>
+    </details>
+  </main>
+</body>
+</html>

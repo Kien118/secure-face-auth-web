@@ -1,7 +1,8 @@
 # Kết quả Ngày 1 — 05/11/2026
 
-Trạng thái: **baseline mã nguồn đã triển khai và kiểm thử tự động; chưa đạt đủ
-điều kiện hoàn thành Ngày 1 vì webcam/khuôn mặt thật chưa được kiểm chứng.**
+Trạng thái: **baseline đã triển khai và có hai kết quả MATCH do người dùng báo;
+chưa đạt đủ điều kiện hoàn thành Ngày 1 vì loại đầu vào và các lượt kiểm thử
+cần thiết chưa được xác nhận đầy đủ.**
 Final cũng chưa đạt: anti-spoofing là Must have nhưng chưa triển khai trong Ngày 1.
 
 ## Hiện trạng ban đầu và căn cứ
@@ -88,8 +89,19 @@ không copy node_modules, .env hay weights từ workspace.
 Đã mở trang bằng in-app browser và thấy giao diện, consent, nút camera/template/verify,
 cảnh báo chưa liveness, trạng thái chưa cấp quyền và checklist Pending.
 Sau đó kết nối điều khiển tab bị mất (“tab not part of session” / “tab not found”),
-nên chưa xác minh được tương tác hay tải model trong browser. Không dùng ảnh hoặc
-webcam giả để thay kết quả vật lý. **Chưa thực hiện bất kỳ lượt camera thật nào.**
+nên chưa trực tiếp xác minh được tương tác hay tải model trong browser. Sau đó người
+dùng báo hai kết quả hiển thị sau; đây là báo cáo của người dùng, chưa kèm thông tin
+loại đầu vào, danh tính so với người đăng ký, thiết bị hay điều kiện thử.
+
+| Lượt do người dùng báo | Kết quả | Distance hiển thị | Threshold | Liveness |
+|---|---|---:|---:|---|
+| Lần 1 | MATCH | 0.5910 | 0.6 | Chưa triển khai |
+| Lần 2 | MATCH | 0.2142 | 0.6 | Chưa triển khai |
+
+Cả hai distance hiển thị đều dưới ngưỡng 0.6; lần 1 gần ngưỡng hơn. Không suy
+diễn đây là người đã đăng ký, người khác hay ảnh điện thoại khi chưa được xác nhận;
+chưa gán hai lượt này vào M1–M3 hoặc P1–P4. Không có cơ sở từ hai lượt để đánh giá
+độ chính xác hay hiệu chỉnh ngưỡng. Không có phiên đăng nhập hay kết quả liveness.
 
 ## Checklist người dùng cần thực hiện
 
@@ -116,7 +128,7 @@ Restart server để xóa toàn bộ template nếu cần bắt đầu lại.
 
 Gửi kết quả theo mẫu: `ID | browser/camera/phone | ánh sáng/tư thế/độ sáng |
 distance (nếu có) | match/non-match/no-face/lỗi | ghi chú`. Không gửi descriptor,
-ảnh khuôn mặt hay tên thật. Chưa có raw counts người thật, người sai hoặc ảnh điện thoại.
+ảnh khuôn mặt hay tên thật. Chưa có raw counts phân loại theo người thật, người sai hoặc ảnh điện thoại.
 Không suy diễn “đã chấp nhận ảnh điện thoại” từ lý thuyết hay vector tổng hợp.
 
 ## Hạn chế và quyết định Ngày 2
@@ -125,7 +137,7 @@ Không suy diễn “đã chấp nhận ảnh điện thoại” từ lý thuy�
   chưa phải kết quả camera đã quan sát trong phiên này.
 - Client descriptor có thể giả/replay. Chưa có trusted enrollment, liveness, transaction,
   session, rate limiting hoặc DB bền vững. CSP và validation không sửa được giới hạn đó.
-- Threshold chưa hiệu chỉnh; detection/descriptor người thật và hành vi trên thiết bị còn Pending.
+- Threshold chưa hiệu chỉnh; loại đầu vào của hai lượt đã báo và hành vi trên thiết bị còn cần xác nhận.
 - Template mất khi restart. Dừng capture không thu hồi request server đã nhận.
 - Không triển khai Ngày 2 trong phiên này. Bước đầu Ngày 2 là PoC chuỗi mắt + quay đầu,
   theo dõi chuyển trạng thái qua nhiều frame và kiểm thử thật với người/ảnh điện thoại;
@@ -140,5 +152,5 @@ Không suy diễn “đã chấp nhận ảnh điện thoại” từ lý thuy�
   Chưa có remote, chưa push và không tự tạo repository GitHub.
 - Không có .env, ảnh, descriptor thật, model weights, secret hoặc tài liệu tmp trong commit.
 
-**Chưa đánh dấu hoàn thành Ngày 1:** cần người dùng thực hiện M0–M3/P1–P4/C1–C5,
-xác nhận webcam → face descriptor → API thực tế, cập nhật quan sát trung thực.
+**Chưa đánh dấu hoàn thành Ngày 1:** cần xác nhận loại đầu vào của hai lượt đã báo,
+thực hiện và ghi nhận các lượt còn thiếu trong M0–M3/P1–P4/C1–C5.

@@ -10,6 +10,10 @@ export async function loadModels(api = globalThis.faceapi) {
 }
 
 export async function captureDescriptor(video, api = globalThis.faceapi) {
+  return (await captureFace(video, api)).descriptor;
+}
+
+export async function captureFace(video, api = globalThis.faceapi) {
   if (!video.videoWidth || !video.videoHeight || video.readyState < 2) {
     throw Object.assign(new Error(), { code: 'CAMERA_NOT_READY' });
   }
@@ -17,14 +21,17 @@ export async function captureDescriptor(video, api = globalThis.faceapi) {
   const canvas = document.createElement('canvas');
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
-  canvas.getContext('2d').drawImage(video, 0, 0);
   try {
+    canvas.getContext('2d').drawImage(video, 0, 0);
     const faces = await api.detectAllFaces(canvas, new api.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }))
       .withFaceLandmarks(true).withFaceDescriptors();
     if (faces.length !== 1) throw Object.assign(new Error(), { code: faces.length ? 'MULTIPLE_FACES' : 'NO_FACE' });
     const descriptor = Array.from(faces[0].descriptor);
     if (descriptor.length !== 128 || !descriptor.every(Number.isFinite)) throw new Error('Invalid inference output');
-    return descriptor;
+    // One scale for both axes preserves eye ratios on non-square video frames.
+    const scale = Math.max(canvas.width, canvas.height);
+    const landmarks = faces[0].landmarks.positions.map(p => [p.x / scale, p.y / scale]);
+    return { descriptor, landmarks };
   } catch (error) {
     if (!error.code) error.code = 'MODEL_ERROR';
     throw error;

@@ -30,7 +30,7 @@ export class Camera {
     }, { once: true });
     this.video.srcObject = stream;
     try { await this.video.play(); }
-    catch (error) { this.stop(); throw error; }
+    catch (error) { if (this.stream === stream) this.stop(); throw error; }
     if (generation !== this.generation) throw Object.assign(new Error(), { code: 'CANCELLED' });
   }
   stop() {

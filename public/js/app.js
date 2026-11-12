@@ -1,12 +1,13 @@
 import { Camera, cameraError } from './camera.js';
 import { loadModels, captureDescriptor } from './face-client.js';
+import { postJson, runChallenge } from './challenge-ui.js';
 
 const $ = id => document.getElementById(id);
 const messages = {
   CONSENT_REQUIRED: 'Hãy đồng ý xử lý dữ liệu trước khi bật camera.',
   CAMERA_NOT_STARTED: 'Chưa cấp quyền / camera chưa bật.',
   CAMERA_STARTING: 'Đang chờ quyền và khởi động camera…',
-  CAMERA_STOPPED: 'Camera đã dừng. Không gửi dữ liệu đang xử lý.',
+  CAMERA_STOPPED: 'Camera đã dừng; đã hủy thao tác phía trình duyệt.',
   CAMERA_DENIED: 'Bạn đã từ chối hoặc thu hồi quyền camera.',
   NO_CAMERA: 'Không tìm thấy camera phù hợp.',
   CAMERA_BUSY: 'Camera đang bận hoặc không thể đọc.',
@@ -25,6 +26,12 @@ const messages = {
   MATCH: 'So khớp thành công — chỉ khớp danh tính, chưa xác thực liveness hay đăng nhập.',
   NO_MATCH: 'Không khớp khuôn mặt với tài khoản được claim.',
   INVALID_ACCOUNT: 'Tài khoản chỉ gồm 1–64 chữ cái, chữ số, dấu _ hoặc -.',
+  CHALLENGE_ACTIVE: 'Đang thực hiện thử thách PoC…',
+  CHALLENGE_EXPIRED: 'Đã hết thời gian. Chưa hoàn thành thử thách; không cấp phiên đăng nhập.',
+  CHALLENGE_NOT_FOUND: 'Thử thách không còn hiệu lực. Hãy bắt đầu lượt mới.',
+  INVALID_LANDMARKS: 'Không đọc được landmarks phù hợp. Hãy nhìn rõ vào camera và thử lại.',
+  SAMPLE_TOO_FAST: 'Mẫu gửi quá nhanh. Hãy bắt đầu thử thách mới.',
+  SEQUENCE_COMPLETE: 'Đã hoàn thành chuỗi PoC. Chưa chứng minh chống giả mạo và chưa cấp phiên đăng nhập.',
   CANCELLED: 'Thao tác đã hủy.'
 };
 let busy = false;
@@ -37,7 +44,8 @@ function buttons() {
   $('models').disabled = busy || camera.active;
   $('start').disabled = busy || camera.active;
   $('stop').disabled = !busy && !camera.active;
-  $('enroll').disabled = $('verify').disabled = busy || !ready || !camera.active;
+  $('enroll').disabled = $('verify').disabled = $('challenge').disabled = busy || !ready || !camera.active;
+  $('account').disabled = busy;
 }
 $('models').addEventListener('click', async () => {
   const current = ++operation;
@@ -54,6 +62,7 @@ function stop() {
   camera.stop();
   busy = false;
   $('score').textContent = '';
+  $('challenge-prompt').textContent = '';
   status('CAMERA_STOPPED'); buttons();
 }
 $('start').addEventListener('click', async () => {
@@ -80,19 +89,15 @@ for (const [id, endpoint] of [['enroll', 'templates'], ['verify', 'verify']]) {
     const accountId = $('account').value.trim();
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(accountId)) return status('INVALID_ACCOUNT');
     const current = ++operation;
-    busy = true; buttons(); status('PROCESSING'); $('score').textContent = '';
+    busy = true; buttons(); status('PROCESSING'); $('score').textContent = ''; $('challenge-prompt').textContent = '';
     try {
       const descriptor = await captureDescriptor($('video'));
       if (current !== operation || !camera.active || !$('consent').checked) return;
       request = new AbortController();
-      const response = await fetch(`/api/${endpoint}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountId, descriptor }), signal: request.signal
-      });
-      const result = await response.json();
+      const result = await postJson(`/api/${endpoint}`, { accountId, descriptor }, request.signal);
       if (current !== operation) return;
       status(result.status ?? 'SERVER_ERROR');
-      if (response.ok && Number.isFinite(result.distance)) {
+      if (Number.isFinite(result.distance)) {
         $('score').textContent = `Distance: ${result.distance.toFixed(4)} | Threshold ban đầu: ${result.threshold} | Liveness: chưa triển khai`;
       }
     } catch (error) {
@@ -100,6 +105,29 @@ for (const [id, endpoint] of [['enroll', 'templates'], ['verify', 'verify']]) {
     } finally { if (current === operation) { busy = false; request = undefined; buttons(); } }
   });
 }
+$('challenge').addEventListener('click', async () => {
+  if (busy || !ready || !camera.active || !$('consent').checked) return;
+  const accountId = $('account').value.trim();
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(accountId)) return status('INVALID_ACCOUNT');
+  const current = ++operation;
+  request = new AbortController();
+  busy = true; buttons(); status('PROCESSING'); $('score').textContent = '';
+  try {
+    await runChallenge({ video: $('video'), accountId, signal: request.signal, onUpdate(result) {
+      if (current !== operation) return;
+      status(result.status);
+      $('challenge-prompt').textContent = Number.isInteger(result.step)
+        ? `Bước ${Math.min(result.step + 1, result.totalSteps)}/${result.totalSteps}: ${result.prompt}` : '';
+      if (Number.isFinite(result.distance)) {
+        const metrics = Number.isFinite(result.ear) && Number.isFinite(result.noseOffset)
+          ? `EAR: ${result.ear.toFixed(3)} | Lệch mũi: ${result.noseOffset.toFixed(3)} | ` : '';
+        $('score').textContent = `${metrics}Distance: ${result.distance.toFixed(4)} | Ngưỡng: ${result.threshold}`;
+      }
+    } });
+  } catch (error) {
+    if (current === operation) { status(error.code ?? 'SERVER_ERROR'); $('challenge-prompt').textContent = ''; }
+  } finally { if (current === operation) { busy = false; request = undefined; buttons(); } }
+});
 window.addEventListener('pagehide', stop);
 document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); });
 buttons();

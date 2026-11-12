@@ -7,7 +7,7 @@ import { faceRoutes } from './routes/face.js';
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
 const browserBundle = fileURLToPath(new URL('../node_modules/face-api.js/dist/face-api.min.js', import.meta.url));
 
-export function createApp({ threshold = 0.6 } = {}) {
+export function createApp({ threshold = 0.6, liveness } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.use(helmet({
@@ -34,8 +34,8 @@ export function createApp({ threshold = 0.6 } = {}) {
     next();
   });
   app.use('/api', express.json({ limit: '8kb', strict: true }));
-  app.get('/api/health', (_req, res) => res.json({ status: 'ok', mode: 'identity-baseline', liveness: false }));
-  app.use('/api', faceRoutes(new FaceEngine(threshold)));
+  app.get('/api/health', (_req, res) => res.json({ status: 'ok', mode: 'identity-and-challenge-poc', challengePoc: true, liveness: false }));
+  app.use('/api', faceRoutes(new FaceEngine(threshold), liveness));
   app.get('/vendor/face-api.min.js', (_req, res) => res.sendFile(browserBundle));
   app.use(express.static(publicDir, { dotfiles: 'deny', index: 'index.html' }));
   app.use((_req, res) => res.status(404).json({ status: 'NOT_FOUND' }));

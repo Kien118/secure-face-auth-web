@@ -6,14 +6,19 @@ export class InputError extends Error {
   }
 }
 
+export function validateAccountId(accountId) {
+  if (typeof accountId !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(accountId)) {
+    throw new InputError('INVALID_ACCOUNT');
+  }
+  return accountId;
+}
+
 export function validatePayload(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body) ||
       Object.keys(body).sort().join(',') !== 'accountId,descriptor') {
     throw new InputError('INVALID_PAYLOAD');
   }
-  if (typeof body.accountId !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(body.accountId)) {
-    throw new InputError('INVALID_ACCOUNT');
-  }
+  validateAccountId(body.accountId);
   const d = body.descriptor;
   if (!Array.isArray(d) || d.length !== 128 ||
       !Array.from(d).every(v => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 10)) {
@@ -36,6 +41,7 @@ export class FaceEngine {
     this.#templates.set(accountId, descriptor);
     return { status: 'TEMPLATE_CREATED', temporary: true };
   }
+  hasTemplate(accountId) { return this.#templates.has(accountId); }
   verify(body) {
     const { accountId, descriptor } = validatePayload(body);
     const reference = this.#templates.get(accountId);

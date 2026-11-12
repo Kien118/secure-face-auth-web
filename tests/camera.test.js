@@ -32,3 +32,19 @@ test('play failure releases stream; permission and no-device errors are distinct
   assert.equal(cameraError({ name: 'NotAllowedError' }), 'CAMERA_DENIED');
   assert.equal(cameraError({ name: 'NotFoundError' }), 'NO_CAMERA');
 });
+
+test('late play rejection does not stop a newly started stream', async () => {
+  const first = fixture(); const second = fixture(); let rejectFirst; let calls = 0;
+  first.video.play = () => ++calls === 1 ? new Promise((_resolve, reject) => { rejectFirst = reject; }) : Promise.resolve();
+  let streams = 0;
+  const camera = new Camera(first.video, undefined, { getUserMedia: async () => ++streams === 1 ? first.stream : second.stream });
+  const oldStart = camera.start();
+  await Promise.resolve();
+  camera.stop();
+  await camera.start();
+  rejectFirst(new Error('old play failed'));
+  await assert.rejects(oldStart);
+  assert.equal(camera.active, true);
+  assert.equal(second.stopped(), 0);
+  camera.stop();
+});

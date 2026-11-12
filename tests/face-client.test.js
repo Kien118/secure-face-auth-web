@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { captureDescriptor, loadModels } from '../public/js/face-client.js';
+import { captureDescriptor, captureFace, loadModels } from '../public/js/face-client.js';
 
 test('one-face gate rejects no/multiple faces and clears transient canvas', async t => {
   const original = globalThis.document;
@@ -19,7 +19,10 @@ test('one-face gate rejects no/multiple faces and clears transient canvas', asyn
     assert.equal(canvas.width, 0);
   }
   const descriptor = new Float32Array(128); // Synthetic only.
-  assert.equal((await captureDescriptor(video, api([{ descriptor }]))).length, 128);
+  const face = { descriptor, landmarks: { positions: Array.from({ length: 68 }, () => ({ x: 320, y: 240 })) } };
+  assert.equal((await captureDescriptor(video, api([face]))).length, 128);
+  const sample = await captureFace(video, api([face]));
+  assert.deepEqual(sample.landmarks[0], [0.5, 0.375]);
   assert.equal(canvas.height, 0);
   await assert.rejects(captureDescriptor({}), e => e.code === 'CAMERA_NOT_READY');
 });

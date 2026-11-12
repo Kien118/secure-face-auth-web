@@ -18,6 +18,7 @@ export async function runChallenge({ video, accountId, signal, onUpdate }) {
     challengeId = challenge.challengeId;
     signal.throwIfAborted();
     onUpdate(challenge);
+    let previousStep = challenge.step;
     while (true) {
       await new Promise(resolve => setTimeout(resolve, 250));
       signal.throwIfAborted();
@@ -26,10 +27,19 @@ export async function runChallenge({ video, accountId, signal, onUpdate }) {
       signal.throwIfAborted();
       const result = await postJson(`/api/liveness/challenges/${challengeId}/samples`, sample, signal);
       signal.throwIfAborted();
+      if (result.step === 2 && previousStep !== 2 && globalThis.speechSynthesis && globalThis.SpeechSynthesisUtterance) {
+        try {
+          const cue = new SpeechSynthesisUtterance('Mở mắt và nhìn thẳng.');
+          cue.lang = 'vi-VN';
+          speechSynthesis.speak(cue);
+        } catch { /* The visible prompt remains available when speech is unsupported. */ }
+      }
+      previousStep = result.step;
       onUpdate(result);
       if (result.status !== 'CHALLENGE_ACTIVE') return result;
     }
   } finally {
+    try { globalThis.speechSynthesis?.cancel(); } catch { /* Keep cancellation working if speech fails. */ }
     if (challengeId) {
       // Cancel also clears server state after local detection or transport errors.
       await fetch(`/api/liveness/challenges/${challengeId}`, {

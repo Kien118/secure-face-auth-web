@@ -76,3 +76,18 @@ test('no face cancels server state and never submits a sample', async t => {
   await assert.rejects(runChallenge({ video, accountId: 'alice', signal: new AbortController().signal, onUpdate() {} }), e => e.code === 'NO_FACE');
   assert.deepEqual(methods, ['POST', 'DELETE']);
 });
+
+test('reopening step announces once and cancellation stops the speech cue', async t => {
+  const original = { speechSynthesis: globalThis.speechSynthesis, SpeechSynthesisUtterance: globalThis.SpeechSynthesisUtterance };
+  const spoken = []; let cancelled = 0; let samples = 0;
+  Object.assign(globalThis, { speechSynthesis: { speak: cue => spoken.push(cue), cancel: () => cancelled++ },
+    SpeechSynthesisUtterance: class { constructor(text) { this.text = text; } } });
+  t.after(() => Object.assign(globalThis, original));
+  setup(t, async (url) => url.endsWith('/samples') ? response(++samples < 3
+    ? { status: 'CHALLENGE_ACTIVE', step: 2 } : { status: 'SEQUENCE_COMPLETE', step: 5 }) : response({ ...challenge(), step: 1 }));
+  await runChallenge({ video, accountId: 'alice', signal: new AbortController().signal, onUpdate() {} });
+  assert.equal(spoken.length, 1);
+  assert.equal(spoken[0].lang, 'vi-VN');
+  assert.match(spoken[0].text, /Mở mắt/);
+  assert.equal(cancelled, 1);
+});

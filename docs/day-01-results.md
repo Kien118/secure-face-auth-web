@@ -1,8 +1,8 @@
 # Kết quả Ngày 1 — 05/11/2026
 
-Trạng thái: **baseline đã triển khai và có hai kết quả MATCH do người dùng báo;
-chưa đạt đủ điều kiện hoàn thành Ngày 1 vì loại đầu vào và các lượt kiểm thử
-cần thiết chưa được xác nhận đầy đủ.**
+Trạng thái: **baseline đã triển khai; hai lượt người đã đăng ký được người dùng báo MATCH.
+Chưa đạt đủ điều kiện hoàn thành Ngày 1 vì các lượt người khác/ảnh điện thoại và
+điều kiện thử cần thiết chưa được ghi nhận đầy đủ.**
 Final cũng chưa đạt: anti-spoofing là Must have nhưng chưa triển khai trong Ngày 1.
 
 ## Hiện trạng ban đầu và căn cứ
@@ -90,18 +90,18 @@ không copy node_modules, .env hay weights từ workspace.
 cảnh báo chưa liveness, trạng thái chưa cấp quyền và checklist Pending.
 Sau đó kết nối điều khiển tab bị mất (“tab not part of session” / “tab not found”),
 nên chưa trực tiếp xác minh được tương tác hay tải model trong browser. Sau đó người
-dùng báo hai kết quả hiển thị sau; đây là báo cáo của người dùng, chưa kèm thông tin
-loại đầu vào, danh tính so với người đăng ký, thiết bị hay điều kiện thử.
+dùng báo hai kết quả hiển thị sau. Ngày 12/11/2026, người dùng xác nhận cả hai đều
+là người đã tạo template; chưa kèm thiết bị hay điều kiện thử.
 
 | Lượt do người dùng báo | Kết quả | Distance hiển thị | Threshold | Liveness |
 |---|---|---:|---:|---|
 | Lần 1 | MATCH | 0.5910 | 0.6 | Chưa triển khai |
 | Lần 2 | MATCH | 0.2142 | 0.6 | Chưa triển khai |
 
-Cả hai distance hiển thị đều dưới ngưỡng 0.6; lần 1 gần ngưỡng hơn. Không suy
-diễn đây là người đã đăng ký, người khác hay ảnh điện thoại khi chưa được xác nhận;
-chưa gán hai lượt này vào M1–M3 hoặc P1–P4. Không có cơ sở từ hai lượt để đánh giá
-độ chính xác hay hiệu chỉnh ngưỡng. Không có phiên đăng nhập hay kết quả liveness.
+Cả hai distance hiển thị đều dưới ngưỡng 0.6; lần 1 gần ngưỡng hơn. Ghi nhận vào M1
+là 2/2 lượt người đăng ký được báo MATCH, chưa phải đánh giá độ chính xác chính thức.
+Chưa biết hai lượt có khác tư thế/ánh sáng nên M2 vẫn Pending. Không có cơ sở từ
+hai lượt để hiệu chỉnh ngưỡng. Không có phiên đăng nhập hay kết quả liveness.
 
 ## Checklist người dùng cần thực hiện
 
@@ -112,8 +112,8 @@ Restart server để xóa toàn bộ template nếu cần bắt đầu lại.
 
 | ID | Thao tác | Kỳ vọng baseline / thông tin cần ghi | Thực tế |
 |---|---|---|---|
-| M0 | Bấm kiểm tra tải model không cần camera | 3 model tải được trong browser; ghi browser/lỗi | Pending |
-| M1 | Người đã đồng ý tạo template rồi xác minh lại | Ghi distance, threshold, match, camera và ánh sáng | Pending |
+| M0 | Bấm kiểm tra tải model không cần camera | 3 model tải được trong browser; ghi browser/lỗi | Đạt khi kiểm tra bản PoC mới ngày 12/11/2026 trong in-app browser |
+| M1 | Người đã đồng ý tạo template rồi xác minh lại | Ghi distance, threshold, match, camera và ánh sáng | Người dùng báo 2 MATCH: 0.5910 và 0.2142; còn thiếu thiết bị/điều kiện |
 | M2 | Cùng người, thay nhẹ tư thế và ánh sáng | Ghi riêng từng lượt, gồm cả lượt không khớp | Pending |
 | M3 | Người khác có consent claim cùng account M1 | Mong đợi NO_MATCH; ghi distance và kết quả thật | Pending |
 | P1 | Ảnh đúng người trên điện thoại, giữ yên | Có thể match; ghi phone, độ sáng, khoảng cách, kết quả | Pending |
@@ -128,7 +128,7 @@ Restart server để xóa toàn bộ template nếu cần bắt đầu lại.
 
 Gửi kết quả theo mẫu: `ID | browser/camera/phone | ánh sáng/tư thế/độ sáng |
 distance (nếu có) | match/non-match/no-face/lỗi | ghi chú`. Không gửi descriptor,
-ảnh khuôn mặt hay tên thật. Chưa có raw counts phân loại theo người thật, người sai hoặc ảnh điện thoại.
+ảnh khuôn mặt hay tên thật. Đã có hai lượt người đăng ký; người sai và ảnh điện thoại chưa có kết quả.
 Không suy diễn “đã chấp nhận ảnh điện thoại” từ lý thuyết hay vector tổng hợp.
 
 ## Hạn chế và quyết định Ngày 2
@@ -137,9 +137,10 @@ Không suy diễn “đã chấp nhận ảnh điện thoại” từ lý thuy�
   chưa phải kết quả camera đã quan sát trong phiên này.
 - Client descriptor có thể giả/replay. Chưa có trusted enrollment, liveness, transaction,
   session, rate limiting hoặc DB bền vững. CSP và validation không sửa được giới hạn đó.
-- Threshold chưa hiệu chỉnh; loại đầu vào của hai lượt đã báo và hành vi trên thiết bị còn cần xác nhận.
+- Threshold chưa hiệu chỉnh; điều kiện của hai lượt đã báo và hành vi trên thiết bị còn cần xác nhận.
 - Template mất khi restart. Dừng capture không thu hồi request server đã nhận.
-- Không triển khai Ngày 2 trong phiên này. Bước đầu Ngày 2 là PoC chuỗi mắt + quay đầu,
+- Ở phiên Ngày 1 chưa triển khai Ngày 2. Ngày 12/11/2026 đã tiếp tục PoC, xem `day-02-results.md`.
+  Bước đầu Ngày 2 là PoC chuỗi mắt + quay đầu,
   theo dõi chuyển trạng thái qua nhiều frame và kiểm thử thật với người/ảnh điện thoại;
   Ngày 3 thêm random challenge/TTL/single-use và thử video theo kế hoạch.
 - Chỉ chọn hướng PAD tiếp theo dựa trên kết quả thật; không dùng blink/pose giả lập để tuyên bố đạt.
@@ -152,5 +153,5 @@ Không suy diễn “đã chấp nhận ảnh điện thoại” từ lý thuy�
   Chưa có remote, chưa push và không tự tạo repository GitHub.
 - Không có .env, ảnh, descriptor thật, model weights, secret hoặc tài liệu tmp trong commit.
 
-**Chưa đánh dấu hoàn thành Ngày 1:** cần xác nhận loại đầu vào của hai lượt đã báo,
-thực hiện và ghi nhận các lượt còn thiếu trong M0–M3/P1–P4/C1–C5.
+**Chưa đánh dấu hoàn thành Ngày 1:** cần ghi thêm điều kiện của hai lượt đã báo,
+thực hiện và ghi nhận các lượt còn thiếu trong M2–M3/P1–P4/C1–C5.

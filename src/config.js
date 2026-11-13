@@ -9,6 +9,7 @@ export function readConfig(env = process.env) {
   }
   return { threshold, port, host: env.HOST ?? '127.0.0.1', liveness: {
     timeoutMs: Number(env.LIVENESS_TIMEOUT_MS ?? '45000'),
+    stepTimeoutMs: Number(env.LIVENESS_STEP_TIMEOUT_MS ?? '15000'),
     eyeOpen: Number(env.LIVENESS_EYE_OPEN ?? '0.25'),
     eyeClosed: Number(env.LIVENESS_EYE_CLOSED ?? '0.18'),
     headTurn: Number(env.LIVENESS_HEAD_TURN ?? '0.20'),

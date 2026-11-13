@@ -1,5 +1,7 @@
 import { captureFace } from './face-client.js';
 
+let activeCue;
+
 export async function postJson(path, body, signal) {
   const timeout = AbortSignal.timeout(10000);
   const response = await fetch(path, {
@@ -13,33 +15,50 @@ export async function postJson(path, body, signal) {
 
 export async function runChallenge({ video, accountId, signal, onUpdate }) {
   let challengeId;
+  let cue;
+  const cancelCue = () => {
+    if (!cue || activeCue !== cue) return;
+    activeCue = undefined;
+    try { globalThis.speechSynthesis?.cancel(); } catch { /* Keep cancellation working if speech fails. */ }
+  };
+  signal.addEventListener('abort', cancelCue, { once: true });
   try {
     const challenge = await postJson('/api/liveness/challenges', { accountId }, signal);
     challengeId = challenge.challengeId;
     signal.throwIfAborted();
     onUpdate(challenge);
-    let previousStep = challenge.step;
-    while (true) {
-      await new Promise(resolve => setTimeout(resolve, 250));
+    let state = challenge;
+    let previousAction = challenge.action;
+    const checkActive = () => {
       signal.throwIfAborted();
       if (Date.now() >= challenge.expiresAt) throw Object.assign(new Error(), { code: 'CHALLENGE_EXPIRED' });
+      if (Date.now() >= state.stepExpiresAt) throw Object.assign(new Error(), { code: 'STEP_EXPIRED' });
+    };
+    while (true) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      checkActive();
       const sample = await captureFace(video);
+      checkActive();
+      const result = await postJson(`/api/liveness/challenges/${challengeId}/samples`, {
+        ...sample, sampleToken: state.sampleToken
+      }, signal);
       signal.throwIfAborted();
-      const result = await postJson(`/api/liveness/challenges/${challengeId}/samples`, sample, signal);
-      signal.throwIfAborted();
-      if (result.step === 2 && previousStep !== 2 && globalThis.speechSynthesis && globalThis.SpeechSynthesisUtterance) {
+      if (result.action === 'open_eyes' && previousAction !== 'open_eyes' && globalThis.speechSynthesis && globalThis.SpeechSynthesisUtterance) {
         try {
-          const cue = new SpeechSynthesisUtterance('Mở mắt và nhìn thẳng.');
-          cue.lang = 'vi-VN';
+          cue = new SpeechSynthesisUtterance('Open your eyes and look straight ahead.');
+          cue.lang = 'en-US';
+          activeCue = cue;
           speechSynthesis.speak(cue);
         } catch { /* The visible prompt remains available when speech is unsupported. */ }
       }
-      previousStep = result.step;
+      previousAction = result.action;
+      state = result;
       onUpdate(result);
       if (result.status !== 'CHALLENGE_ACTIVE') return result;
     }
   } finally {
-    try { globalThis.speechSynthesis?.cancel(); } catch { /* Keep cancellation working if speech fails. */ }
+    signal.removeEventListener('abort', cancelCue);
+    cancelCue();
     if (challengeId) {
       // Cancel also clears server state after local detection or transport errors.
       await fetch(`/api/liveness/challenges/${challengeId}`, {

@@ -1,47 +1,85 @@
 <!doctype html>
-<html lang="vi">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Face Authentication — PoC Ngày 2</title>
+  <meta name="theme-color" content="#f4f5f0">
+  <title>FaceLab — Face Authentication Workspace</title>
   <link rel="stylesheet" href="/style.css">
   <script defer src="/vendor/face-api.min.js"></script>
   <script type="module" src="/js/app.js"></script>
 </head>
 <body>
-  <main>
-    <h1>Face Authentication — PoC Ngày 2</h1>
-    <p>So khớp danh tính 1:1 và thử chuỗi nhắm/mở mắt, quay đầu. <strong>Khả năng chống giả mạo chưa được kiểm chứng; chưa cấp phiên đăng nhập.</strong> Nút xác minh baseline chỉ kiểm tra danh tính.</p>
-    <p>Chỉ thử với người đã đồng ý. Không lưu ảnh/video. Khi bấm tạo template, xác minh hoặc bắt đầu thử thách, descriptor được gửi đến server. Trong thử thách, landmarks cũng được gửi theo từng mẫu để kiểm tra chuỗi; các mẫu không được lưu. Template chỉ nằm trong RAM đến khi server dừng.</p>
-    <label><input id="consent" type="checkbox"> Tôi đồng ý xử lý khuôn mặt của mình cho thử nghiệm này.</label>
-    <p><label>Tài khoản thử <input id="account" value="demo-user" maxlength="64" pattern="[a-zA-Z0-9_-]{1,64}" autocomplete="off"></label></p>
-    <div class="buttons">
-      <button id="models">Kiểm tra tải model (không dùng camera)</button>
-      <button id="start">Bật camera và tải model</button>
-      <button id="stop" disabled>Dừng camera</button>
-      <button id="enroll" disabled>Tạo template thử nghiệm</button>
-      <button id="verify" disabled>Xác minh baseline 1:1</button>
-      <button id="challenge" disabled>Bắt đầu thử thách PoC</button>
-    </div>
-    <video id="video" autoplay muted playsinline aria-label="Xem trước webcam"></video>
-    <p id="status" role="status" aria-live="polite" data-code="CAMERA_NOT_STARTED">Chưa cấp quyền / camera chưa bật.</p>
-    <p id="score"></p>
-    <p id="challenge-prompt" role="status" aria-live="polite"></p>
-    <p>Thử thách: nhìn thẳng, mở mắt → nhắm mắt giữ đến lời nhắc “Mở mắt” → mở mắt → quay mũi sang trái khung hình → nhìn thẳng. Nếu không nghe giọng nói, nhắm khoảng 2 giây rồi mở để kiểm tra bước; lặp lại nếu cần. Preview không lật gương. Bấm “Dừng camera” để hủy.</p>
-    <p>Template không được thay thế tự do. Muốn đăng ký lại, dừng và khởi động lại server để xóa dữ liệu RAM.</p>
-    <details>
-      <summary>Checklist thử nghiệm trên thiết bị của bạn</summary>
-      <ol>
-        <li>Bật camera, tạo template rồi xác minh lại bằng cùng người.</li>
-        <li>Đổi nhẹ tư thế và ánh sáng, xác minh lại.</li>
-        <li>Người khác đã đồng ý claim cùng tài khoản, bấm xác minh.</li>
-        <li>Đưa ảnh đúng người trên điện thoại: giữ yên, di chuyển, nghiêng, đổi độ sáng; xác minh từng lượt.</li>
-        <li>Dừng camera giữa xử lý; thu hồi quyền; thử từ chối quyền từ đầu.</li>
-        <li>Thử khung hình không có mặt và có hai khuôn mặt.</li>
-        <li>Chạy thử thách PoC với người đăng ký, rồi thử ảnh điện thoại giữ yên/di chuyển/nghiêng và video. Ghi toàn bộ lần vượt qua hoặc thất bại.</li>
-      </ol>
-      <p>Ghi mã thử, thiết bị, ánh sáng, tư thế, distance và kết quả. Không gửi ảnh hoặc descriptor.</p>
-    </details>
-  </main>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="FaceLab home"><span class="brand-mark" aria-hidden="true">f.</span><span>FaceLab<span class="brand-caption">Face authentication research</span></span></a>
+      <div class="topbar-meta"><span class="prototype-badge"><span class="dot"></span> Research prototype</span><span class="version-label">EXPERIMENT 03</span></div>
+    </header>
+
+    <main>
+      <section class="intro" aria-labelledby="page-title">
+        <div><p class="eyebrow">A closer look at identity</p><h1 id="page-title">Face authentication,<br><em>one step at a time.</em></h1><p class="intro-copy">A focused workspace for webcam capture, identity comparison, and guided challenge experiments.</p></div>
+        <aside class="scope-note"><span class="scope-number">03</span><div><strong>Active challenge PoC</strong><p>Explore eye and head movements.<br>Spoofing resistance is not yet verified.</p></div></aside>
+      </section>
+
+      <div class="workspace-grid">
+        <div class="capture-column">
+          <section class="camera-card" aria-labelledby="camera-title">
+            <div class="card-heading"><div><p class="eyebrow">Live workspace</p><h2 id="camera-title">Camera preview</h2></div><span id="camera-state" class="device-pill" data-state="off">Camera off</span></div>
+            <div id="camera-stage" class="camera-stage" data-active="false">
+              <video id="video" autoplay muted playsinline aria-label="Unmirrored webcam preview" hidden></video>
+              <div class="framing-guide" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+              <div id="camera-placeholder" class="camera-placeholder">
+                <svg width="76" height="88" viewBox="0 0 76 88" fill="none" aria-hidden="true"><path d="M17 31C17 16 25 7 38 7s21 9 21 24v12c0 19-11 30-21 30S17 62 17 43V31Z" stroke="currentColor" stroke-width="1.5"/><path d="M27 35h5m12 0h5M38 40v9h4m-12 9c5 4 11 4 16 0M10 82c5-9 14-13 20-13m16 0c6 0 15 4 20 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                <h3>Ready when you are.</h3><p>Your camera stays off until you start it.</p>
+              </div>
+              <span class="preview-caption">Positioning guide · one face · unmirrored</span>
+            </div>
+            <div class="camera-controls"><div class="camera-buttons"><button id="start" type="button" class="button button-dark">Start camera <span aria-hidden="true">↗</span></button><button id="stop" type="button" class="button button-outline" disabled>Stop camera</button></div><span class="camera-footnote">No images or video saved</span></div>
+          </section>
+
+          <section id="challenge-panel" class="challenge-card" data-state="idle" aria-labelledby="challenge-title">
+            <div class="challenge-heading"><div><p class="eyebrow">Guided sequence</p><h2 id="challenge-title">Follow the next instruction.</h2></div><span id="challenge-step" class="step-badge">Not started</span></div>
+            <div class="progress-row"><progress id="challenge-progress" max="5" value="0" aria-label="Completed challenge steps"></progress><span class="progress-caption">5 steps</span></div>
+            <div class="challenge-instruction"><span id="challenge-action" class="action-label">Waiting for an attempt</span><h3 id="challenge-prompt" aria-live="polite"></h3><p class="challenge-idle">Start a challenge after creating your test template. The server reveals one instruction at a time.</p></div>
+            <div id="challenge-timer" class="challenge-timers" hidden><div><span class="timer-dot" aria-hidden="true"></span><span>Step remaining</span><strong id="step-time">—</strong></div><div><span>Attempt remaining</span><strong id="attempt-time">—</strong></div></div>
+            <p class="challenge-help">Keep your eyes closed until the spoken “Open your eyes” cue. If speech is unavailable, reopen after about two seconds to check progress. Left and right refer to the preview.</p>
+          </section>
+
+          <section id="status-panel" class="status-panel" data-tone="neutral" aria-labelledby="status-heading"><span class="status-symbol" aria-hidden="true"></span><div><h2 id="status-heading">Ready to set up</h2><p id="status" role="status" aria-live="polite" data-code="CAMERA_NOT_STARTED">Camera permission has not been requested; the camera is off.</p></div></section>
+        </div>
+
+        <aside class="setup-column" aria-label="Session setup and measurements">
+          <section class="setup-card" aria-labelledby="setup-title">
+            <div class="section-title"><span class="section-number">01</span><h2 id="setup-title">Prepare your session</h2></div>
+            <label class="field-label" for="account">Test account</label><input id="account" class="account-input" value="demo-user" maxlength="64" pattern="[a-zA-Z0-9_-]{1,64}" autocomplete="off" spellcheck="false" aria-describedby="account-help"><p id="account-help" class="field-help">Use a test ID. Letters, digits, underscores, and hyphens.</p>
+            <label class="consent-control"><input id="consent" type="checkbox" aria-describedby="privacy-note"><span>I consent to processing my face for this experiment.</span></label>
+            <p id="privacy-note" class="privacy-note">Descriptors and selected landmarks go to this server. Samples are not retained; templates stay in RAM until restart.</p>
+            <div class="model-control"><span id="model-state" class="model-state" data-state="off">Models not loaded</span><button id="models" type="button" class="text-button">Check models <span aria-hidden="true">↗</span></button></div>
+          </section>
+
+          <section class="actions-card" aria-labelledby="actions-title">
+            <div class="section-title"><span class="section-number">02</span><h2 id="actions-title">Compare &amp; challenge</h2></div>
+            <p class="section-copy">Enroll once, compare identity, then explore the active challenge.</p>
+            <div class="action-buttons"><button id="enroll" type="button" class="button button-outline" disabled>Create test template <span aria-hidden="true">+</span></button><button id="verify" type="button" class="button button-outline" disabled>Verify baseline 1:1 <span aria-hidden="true">→</span></button><button id="challenge" type="button" class="button button-primary" disabled>Start randomized challenge <span aria-hidden="true">→</span></button></div>
+            <p id="capture-hint" class="field-help">Start the camera to enable capture actions.</p>
+            <div class="boundary-note"><span aria-hidden="true">i</span><p>Matching and sequence completion do not create a login session.</p></div>
+          </section>
+
+          <section class="metrics-card" aria-labelledby="metrics-title"><div class="metrics-heading"><p class="eyebrow">Latest server response</p><h2 id="metrics-title">Measurements</h2></div><div id="result-placeholder" class="result-placeholder"><span aria-hidden="true">—</span><p>Your measurements will appear after a captured sample.</p></div><div id="metrics-panel" class="metrics-grid" hidden><div><span>Identity distance</span><output aria-live="off" id="metric-distance">—</output></div><div><span>Match threshold</span><output aria-live="off" id="metric-threshold">—</output></div><div><span>Eye aspect ratio</span><output aria-live="off" id="metric-ear">—</output></div><div><span>Nose offset</span><output aria-live="off" id="metric-pose">—</output></div></div><p class="metric-note">Experimental thresholds. Lower identity distance indicates a closer match.</p></section>
+        </aside>
+      </div>
+
+      <section class="protocol-section" aria-label="Experiment guidance">
+        <div class="protocol-intro"><p class="eyebrow">Before you draw conclusions</p><h2>Test the limits.<br>Record what happens.</h2><p>This workspace supports an experiment, not a verified anti-spoofing claim.</p></div>
+        <div class="protocol-details">
+          <details><summary>Manual test checklist <span aria-hidden="true">+</span></summary><ol><li>Enroll a consenting participant, then verify the same person under slightly different poses and lighting.</li><li>Have another consenting participant claim the same test account.</li><li>Try the enrolled person's phone photo held still, moved, tilted, and at different brightness levels.</li><li>Try phone video from different starting points. Record every rejection and bypass.</li><li>Stop the camera mid-attempt, deny or revoke permission, and test no face or multiple faces.</li></ol><p>Record the trial ID, devices, conditions, final step, distance, and outcome. Do not share face media, descriptors, landmarks, or tokens.</p></details>
+          <details><summary>What this prototype can establish <span aria-hidden="true">+</span></summary><p>The server checks identity distance, action order, sample tokens, and deadlines. Descriptors and landmarks still originate in a client-controlled browser. Completing the sequence does not prove a genuine camera source or resistance to photo/video attacks.</p><p>Only four action-order/direction combinations exist. Real presentation-attack trials and hardware calibration are still pending.</p></details>
+          <details><summary>Data handling &amp; resetting a session <span aria-hidden="true">+</span></summary><p>The camera starts only after your action and consent. No image or video is saved. Descriptors and selected landmarks are sent for matching and challenge evaluation; individual samples are not retained.</p><p>Templates cannot be freely replaced. Restart the server to clear RAM and enroll again. Hiding this page or withdrawing consent stops the camera; a request already received by the server cannot be retracted.</p></details>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer"><span><strong>FaceLab</strong> · Face Authentication for Web Applications</span><span>Research PoC / English edition</span></footer>
+  </div>
 </body>
 </html>

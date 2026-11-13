@@ -20,7 +20,7 @@ function landmarks({ closed = false, turned = false } = {}) {
 
 async function fixture(t, options = {}) {
   let time = 1000;
-  const server = createApp({ liveness: { ...options, now: () => time } }).listen(0, '127.0.0.1');
+  const server = createApp({ liveness: { random: () => 0, ...options, now: () => time } }).listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const base = `http://127.0.0.1:${server.address().port}/api`;
@@ -28,14 +28,22 @@ async function fixture(t, options = {}) {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
   });
   const enroll = (accountId = 'alice', value = 0) => post('templates', { accountId, descriptor: descriptor(value) });
+  const tokens = new Map();
   const create = async (accountId = 'alice') => {
     const response = await post('liveness/challenges', { accountId });
     assert.equal(response.status, 201);
-    return response.json();
+    const result = await response.json();
+    tokens.set(result.challengeId, result.sampleToken);
+    return result;
   };
-  const sample = (challengeId, body = { descriptor: descriptor(), landmarks: landmarks() }) => {
+  const sample = async (challengeId, body = { descriptor: descriptor(), landmarks: landmarks() }) => {
     time += 200;
-    return post(`liveness/challenges/${challengeId}/samples`, body);
+    const response = await post(`liveness/challenges/${challengeId}/samples`, { sampleToken: tokens.get(challengeId), ...body });
+    if (response.ok) {
+      const result = await response.clone().json();
+      if (result.sampleToken) tokens.set(challengeId, result.sampleToken);
+    }
+    return response;
   };
   return { post, enroll, create, sample, advance: ms => { time += ms; },
     cancel: id => fetch(`${base}/liveness/challenges/${id}`, { method: 'DELETE' }) };
@@ -54,6 +62,9 @@ test('challenge creation requires a template and exact account-only schema; canc
   assert.equal(typeof created.challengeId, 'string');
   assert.equal(created.sequencePassed, false);
   assert.equal(created.authenticated, false);
+  assert.equal(created.action, 'look_straight');
+  assert.match(created.sampleToken, /^[a-f0-9]{64}$/);
+  assert.ok(created.stepExpiresAt <= created.expiresAt);
   assert.equal((await f.cancel(created.challengeId)).status, 204);
   assert.equal((await f.sample(created.challengeId)).status, 404);
 });
@@ -80,6 +91,7 @@ test('ordered identity-matched evidence completes a PoC sequence, consumes the c
   }
   assert.equal(result.status, 'SEQUENCE_COMPLETE');
   assert.equal(result.distance, 0);
+  assert.equal(result.sampleToken, undefined);
   assert.equal((await f.sample(challengeId)).status, 404);
 });
 
@@ -156,4 +168,46 @@ test('expired challenges fail closed using server time', async t => {
   assert.equal(response.status, 410);
   assert.equal((await response.json()).status, 'CHALLENGE_EXPIRED');
   assert.equal((await f.sample(challengeId)).status, 404);
+});
+
+test('stale tokens cannot replay or advance concurrent sample requests twice', async t => {
+  const f = await fixture(t);
+  await f.enroll();
+  const created = await f.create();
+  const body = { descriptor: descriptor(), landmarks: landmarks(), sampleToken: created.sampleToken };
+  const responses = await Promise.all([f.sample(created.challengeId, body), f.sample(created.challengeId, body)]);
+  assert.deepEqual(responses.map(response => response.status).sort(), [200, 400]);
+  const accepted = await responses.find(response => response.status === 200).json();
+  const rejected = await responses.find(response => response.status === 400).json();
+  assert.equal(accepted.step, 0);
+  assert.equal(accepted.sequencePassed, false);
+  assert.notEqual(accepted.sampleToken, created.sampleToken);
+  assert.equal(accepted.authenticated, false);
+  assert.equal(rejected.status, 'INVALID_SAMPLE_TOKEN');
+  assert.equal((await f.sample(created.challengeId)).status, 404);
+});
+
+test('missing and cross-challenge tokens cannot substitute for the target request token', async t => {
+  const f = await fixture(t);
+  await f.enroll();
+  const first = await f.create();
+  for (const sampleToken of [undefined, 'invalid', first.sampleToken]) {
+    const target = await f.create();
+    const response = await f.sample(target.challengeId, { descriptor: descriptor(), landmarks: landmarks(), sampleToken });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).status, 'INVALID_SAMPLE_TOKEN');
+    assert.equal((await f.sample(target.challengeId)).status, 404);
+  }
+  assert.equal((await f.sample(first.challengeId)).status, 200);
+});
+
+test('step deadline expires before total deadline even with a valid current token', async t => {
+  const f = await fixture(t, { stepTimeoutMs: 1000, timeoutMs: 5000 });
+  await f.enroll();
+  const created = await f.create();
+  f.advance(1000);
+  const response = await f.sample(created.challengeId);
+  assert.equal(response.status, 410);
+  assert.equal((await response.json()).status, 'STEP_EXPIRED');
+  assert.equal((await f.sample(created.challengeId)).status, 404);
 });

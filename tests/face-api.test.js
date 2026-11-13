@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createApp } from '../src/app.js';
 import { FaceEngine, validatePayload } from '../src/services/face-engine.js';
 import { readConfig } from '../src/config.js';
@@ -29,7 +30,7 @@ test('backend starts, health and frontend/assets work with security headers', as
   assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(res.headers.get('cache-control'), 'no-store');
   assert.equal(res.headers.get('x-powered-by'), null);
-  for (const path of ['/', '/js/app.js', '/js/camera.js', '/js/face-client.js', '/vendor/face-api.min.js']) {
+  for (const path of ['/', '/js/app.js', '/js/camera.js', '/js/face-client.js', '/js/workspace-ui.js', '/style.css', '/vendor/face-api.min.js']) {
     assert.equal((await fetch(base + path)).status, 200, path);
   }
   assert.equal((await fetch(base + '/.env')).status, 404);
@@ -44,6 +45,17 @@ test('reject missing, wrong-type, wrong-dimension and out-of-range descriptors',
   for (const accountId of ['', '../alice', 'a b', 'x'.repeat(65), {}, null]) {
     assert.equal((await post('templates', { accountId, descriptor: vector() })).status, 400);
   }
+});
+
+test('an occupied port reports the startup problem without a secondary TypeError', async t => {
+  const { base } = await fixture(t);
+  const result = spawnSync(process.execPath, ['src/server.js'], {
+    env: { ...process.env, HOST: '127.0.0.1', PORT: new URL(base).port },
+    encoding: 'utf8', timeout: 10000
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /EADDRINUSE/);
+  assert.doesNotMatch(result.stderr, /TypeError/);
 });
 
 test('NaN and Infinity are rejected directly and as invalid or overflowing JSON', async t => {
@@ -105,6 +117,8 @@ test('templates are copied, bounded and isolated to server instance RAM', () => 
 
 test('threshold comes from validated config and boundary uses <=', () => {
   assert.equal(readConfig({ FACE_MATCH_THRESHOLD: '0.4' }).threshold, 0.4);
+  assert.equal(readConfig({ LIVENESS_STEP_TIMEOUT_MS: '9000' }).liveness.stepTimeoutMs, 9000);
+  assert.throws(() => createApp(readConfig({ LIVENESS_STEP_TIMEOUT_MS: 'NaN' })), /Invalid liveness configuration/);
   for (const value of ['NaN', 'Infinity', '0', '-1', '3', '']) {
     assert.throws(() => readConfig({ FACE_MATCH_THRESHOLD: value }));
   }

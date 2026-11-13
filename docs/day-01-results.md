@@ -1,22 +1,18 @@
-# Kết quả Ngày 1 — 05/11/2026
+# Day 1 Results — 5 November 2026
 
-Trạng thái: **baseline đã triển khai; hai lượt người đã đăng ký được người dùng báo MATCH.
-Chưa đạt đủ điều kiện hoàn thành Ngày 1 vì các lượt người khác/ảnh điện thoại và
-điều kiện thử cần thiết chưa được ghi nhận đầy đủ.**
-Final cũng chưa đạt: anti-spoofing là Must have nhưng chưa triển khai trong Ngày 1.
+Status: **The baseline is implemented, and the user reported two MATCH results for the enrolled person. Day 1 is not fully complete because other-person and phone-photo trials, together with the required test conditions, have not been documented in full.**
+The Final project is also incomplete: anti-spoofing is a Must have requirement and was not implemented on Day 1.
 
-## Hiện trạng ban đầu và căn cứ
+## Initial State and Reference Material
 
-- Git `main`, chưa có commit, không có remote; chỉ có `tmp/read_inspection/` chưa track.
-- Không có mã ứng dụng, README, AGENTS.md hay rules dự án trong workspace/đường dẫn cha đã kiểm tra.
-- Đọc lại Midterm, yêu cầu Topic 2 và kế hoạch 15 ngày đã thống nhất trong chat
-  “Đọc và đối chiếu ba tệp”. Giữ nguyên toàn bộ tài liệu ban đầu, không đưa chúng vào Git.
-- Giữ HTML/CSS/JavaScript + face-api.js/TensorFlow.js và Node.js/Express hybrid.
-  Server sở hữu quyết định matching; challenge, PAD và session chưa triển khai.
+- Git branch `main` had no commits or remote; only `tmp/read_inspection/` was untracked.
+- No application source, README, AGENTS.md, or project rules were found in the workspace or the parent paths checked.
+- The Midterm, official Topic 2 requirements, and agreed 15-day plan were reviewed again using the earlier three-document comparison discussion. All original reference files were preserved and excluded from Git.
+- The implementation retained the hybrid HTML/CSS/JavaScript, face-api.js/TensorFlow.js, and Node.js/Express architecture. The server owned the matching decision; challenges, PAD, and sessions were not yet implemented.
 
-## Môi trường thực tế
+## Actual Environment
 
-| Thành phần | Phiên bản / điều kiện |
+| Component | Version / conditions |
 |---|---|
 | OS | Windows, PowerShell |
 | Node / npm | 22.13.0 / 10.9.2 |
@@ -24,134 +20,106 @@ Final cũng chưa đạt: anti-spoofing là Must have nhưng chưa triển khai 
 | Express / Helmet | 5.3.0 / 8.3.0 |
 | face-api.js / TF.js core | 0.22.2 / 1.7.0 |
 | node-fetch override | 2.7.0 |
-| Model | Tiny Face Detector, tiny 68 landmarks, face recognition 128D |
-| Model nguồn | commit 8609b25a15f417398a4d2b95dc91985cd1e0c0c3, MIT notice, SHA-256 khóa |
-| Threshold | 0.6 ban đầu, chưa hiệu chỉnh trên người thật |
-| Web | loopback localhost:3000; HTTP chỉ dùng local |
-| Browser quan sát | ChatGPT in-app browser; mở được trang ban đầu |
-| Webcam / điện thoại / ánh sáng | Pending — chưa thu thập thông tin thiết bị |
+| Models | Tiny Face Detector, tiny 68-point landmarks, 128D face recognition |
+| Model source | Commit 8609b25a15f417398a4d2b95dc91985cd1e0c0c3, MIT notice, pinned SHA-256 checksums |
+| Threshold | Initial value 0.6; not calibrated on real participants |
+| Web | Loopback localhost:3000; HTTP for local use only |
+| Observed browser | ChatGPT in-app browser; initial page opened successfully |
+| Webcam / phone / lighting | Pending — device information has not been collected |
 
-## Đã triển khai
+## Implemented Features
 
-- Express phục vụ frontend và API cùng origin, health endpoint.
-- Consent trước camera; bật/dừng, preview, dừng khi ẩn/đổi trang; xử lý lỗi quyền/thiết bị.
-- Tải model cùng origin; có nút kiểm tra tải model không cần camera.
-- Chụp một frame tạm trong RAM, phát hiện tất cả mặt, chỉ chấp nhận đúng một mặt;
-  landmarks và descriptor; không ghi ảnh, không gửi video liên tục.
-- POST descriptor vào API; schema đúng hai field; 128 số hữu hạn, chặn giá trị
-  bất thường, JSON tối đa 8 KiB. Không nhận cờ matched/authenticated từ client.
-- Template riêng theo tài khoản trong RAM; giới hạn 100, từ chối ghi đè; không database.
-- Server tính Euclidean distance, trả match/non-match và `authenticated: false`.
-- Security headers, CSP, no-store, không log descriptor, ignore .env/weights/tài liệu tmp.
-- Downloader kiểm checksum cố định và giữ upstream MIT notice. Không tải ảnh người thật.
+- Express serves the frontend and API from the same origin, including a health endpoint.
+- Consent precedes camera use. The UI supports start/stop, preview, stopping when the page is hidden or left, and permission/device errors.
+- Models load from the same origin; a separate button checks model loading without opening the camera.
+- One temporary frame is captured in RAM. All faces are detected, and exactly one face is required before obtaining landmarks and a descriptor. Images are not saved, and continuous video is not uploaded.
+- Descriptors are POSTed to the API using an exact two-field schema: 128 finite numbers, abnormal-value checks, and an 8 KiB JSON limit. Client `matched` or `authenticated` flags are not accepted.
+- Templates are held separately by account in RAM, with a limit of 100 and no unrestricted replacement. No database is used.
+- The server calculates Euclidean distance and returns match/non-match with `authenticated: false`.
+- Security headers, CSP, and no-store are set. Descriptors are not logged. `.env`, weights, and temporary reference files are ignored by Git.
+- The downloader checks pinned checksums and retains the upstream MIT notice. It does not download real face photographs.
 
-## Kiểm thử tự động đã chạy
+## Automated Checks Run
 
-| Lệnh / phép kiểm | Kết quả quan sát |
+| Command / check | Observed result |
 |---|---|
-| `npm install --ignore-scripts` | Cài được; ban đầu 3 advisory, đã xử lý bằng node-fetch override |
-| `npm audit --audit-level=low` | 0 vulnerabilities sau bản vá |
-| `npm test` | **13/13 đạt**, 0 fail, dữ liệu synthetic và mocks |
-| `npm run lint` | **15 tệp JS đạt** kiểm tra cú pháp Node; chưa dùng ESLint |
-| `npm run models:download` | Tải đủ 3 manifest + 4 shards + LICENSE, checksum đạt |
-| `npm run check:models` | Nạp được 3 network; tensor zeros → 128 giá trị hữu hạn |
-| `npm start` | Entrypoint khởi động tại 127.0.0.1:3000 |
-| HTTP/frontend | Health, HTML, modules và browser bundle trả 200; headers đạt |
-| Build | Không áp dụng: ES modules tĩnh, không có bundler |
+| `npm install --ignore-scripts` | Installed successfully; the initial three advisories were addressed with the node-fetch override |
+| `npm audit --audit-level=low` | 0 vulnerabilities after the patch |
+| `npm test` | **13/13 passed**, 0 failures; synthetic data and mocks only |
+| `npm run lint` | **15 JS files passed** Node syntax checks; ESLint was not used |
+| `npm run models:download` | Downloaded three manifests, four shards, and LICENSE; checksums passed |
+| `npm run check:models` | Loaded three networks; a zero tensor produced 128 finite values |
+| `npm start` | The entrypoint started at 127.0.0.1:3000 |
+| HTTP/frontend | Health, HTML, modules, and browser bundle returned 200; header checks passed |
+| Build | Not applicable: static ES modules without a bundler |
 
-13 test bao gồm backend/health, static assets/headers, schema/dimension/account,
-NaN/Infinity/JSON overflow, giới hạn body, content type/query/cross-site, cờ giả,
-chưa template, template RAM/1:1, distance/threshold, cách ly/capacity/copy template,
-camera lifecycle/hủy quyền đang chờ/play lỗi, gate không/multiple faces và retry tải model.
-Mocks camera và tensor tổng hợp **không phải bằng chứng kiểm thử webcam thật**.
+The 13 tests covered backend/health, static assets/headers, schema/dimensions/accounts, NaN/Infinity/JSON overflow, body limits, content type/query/cross-site handling, forged flags, missing templates, RAM templates and 1:1 matching, distance/threshold, template isolation/capacity/copying, camera lifecycle and cancellation while permission was pending, playback errors, zero/multiple-face gates, and model-load retries.
+Camera mocks and synthetic tensors are **not evidence of physical webcam testing**.
 
-Lần chạy HTTP trong sandbox ban đầu thất bại vì không kết nối được loopback;
-đã chạy lại ngoài sandbox với quyền được cấp, 13/13 đạt. Không đổi test để che lỗi.
-Native TensorFlow/canvas không được cài; chọn inference browser theo Midterm,
-không có lỗi native bị che giấu. Thông báo TF.js gợi ý backend native trong smoke test
-CPU là thông báo hiệu năng, test vẫn đạt.
+The first sandboxed HTTP run failed because it could not connect to loopback. It was rerun outside the sandbox with permission, and 13/13 tests passed. Tests were not changed to conceal the failure. Native TensorFlow/canvas was not installed; browser inference was selected consistently with the Midterm. No native failure was concealed. The TF.js suggestion to install a native backend during the CPU smoke test was a performance notice; the test still passed.
 
-## Kiểm tra bản source sạch
+## Clean Source Verification
 
-Đã xuất source đã commit bằng `git archive` từ `8667063` vào thư mục tạm bị ignore,
-không copy node_modules, .env hay weights từ workspace.
+Committed source was exported with `git archive` from `8667063` into an ignored temporary directory. `node_modules`, `.env`, and weights were not copied from the working directory.
 
-- `npm ci --ignore-scripts`: cài mới 78 packages, audit 0 vulnerabilities.
-- `npm test`: 13/13 đạt trong bản sạch.
-- `npm run lint`: 15 tệp đạt trong bản sạch.
-- `npm run models:download`: tải lại assets từ nguồn khóa, checksum đạt.
-- `npm run check:models`: nạp 3 network và tensor inference 128D đạt trong bản sạch.
-- Smoke test entrypoint thật `src/server.js` với PORT=0: khởi động, health và HTML trả 200.
-- Đây là kiểm chứng source sạch cho runtime; không suy ra webcam thật hoạt động.
+- `npm ci --ignore-scripts`: installed 78 packages from scratch; audit reported 0 vulnerabilities.
+- `npm test`: 13/13 passed in the clean source export.
+- `npm run lint`: 15 files passed in the clean source export.
+- `npm run models:download`: downloaded assets again from the pinned source; checksums passed.
+- `npm run check:models`: three networks loaded, and 128D tensor inference passed in the clean source export.
+- Smoke test of the actual `src/server.js` entrypoint with PORT=0: startup succeeded, and health/HTML returned 200.
+- This verifies the runtime from clean source; it does not establish that a physical webcam works.
 
-## Quan sát browser và camera thật
+## Browser Observations and Physical Camera Results
 
-Đã mở trang bằng in-app browser và thấy giao diện, consent, nút camera/template/verify,
-cảnh báo chưa liveness, trạng thái chưa cấp quyền và checklist Pending.
-Sau đó kết nối điều khiển tab bị mất (“tab not part of session” / “tab not found”),
-nên chưa trực tiếp xác minh được tương tác hay tải model trong browser. Sau đó người
-dùng báo hai kết quả hiển thị sau. Ngày 12/11/2026, người dùng xác nhận cả hai đều
-là người đã tạo template; chưa kèm thiết bị hay điều kiện thử.
+The page opened in the in-app browser, showing the interface, consent control, camera/template/verification buttons, the no-liveness warning, the initial permission state, and a Pending checklist. Browser control was then lost ("tab not part of session" / "tab not found"), so interaction and model loading could not be directly verified during that attempt.
 
-| Lượt do người dùng báo | Kết quả | Distance hiển thị | Threshold | Liveness |
+The user subsequently reported these two displayed results. On 12 November 2026, the user confirmed that both trials used the person who had created the template. Device information and test conditions were not supplied.
+
+| User-reported trial | Result | Displayed distance | Threshold | Liveness |
 |---|---|---:|---:|---|
-| Lần 1 | MATCH | 0.5910 | 0.6 | Chưa triển khai |
-| Lần 2 | MATCH | 0.2142 | 0.6 | Chưa triển khai |
+| Trial 1 | MATCH | 0.5910 | 0.6 | Not implemented |
+| Trial 2 | MATCH | 0.2142 | 0.6 | Not implemented |
 
-Cả hai distance hiển thị đều dưới ngưỡng 0.6; lần 1 gần ngưỡng hơn. Ghi nhận vào M1
-là 2/2 lượt người đăng ký được báo MATCH, chưa phải đánh giá độ chính xác chính thức.
-Chưa biết hai lượt có khác tư thế/ánh sáng nên M2 vẫn Pending. Không có cơ sở từ
-hai lượt để hiệu chỉnh ngưỡng. Không có phiên đăng nhập hay kết quả liveness.
+Both displayed distances are below the initial 0.6 threshold; Trial 1 is closer to the threshold. M1 records 2/2 enrolled-person trials reported as MATCH, which is not a formal accuracy evaluation. It is unknown whether pose or lighting changed between trials, so M2 remains Pending. These two trials do not provide a basis for threshold calibration. No login session or liveness result was produced.
 
-## Checklist người dùng cần thực hiện
+## Checklist for the User
 
-Mở http://localhost:3000 (nếu server dừng thì `npm start`). Trước hết bấm kiểm tra
-tải model; sau đó tick consent của người tham gia, bật camera và cấp quyền trong browser.
-Dùng mã tài khoản giả danh, ví dụ `demo-user`. Không thay template giữa các lượt so sánh.
-Restart server để xóa toàn bộ template nếu cần bắt đầu lại.
+Open [localhost:3000](http://localhost:3000), or run `npm start` if the server is stopped. Check model loading first, obtain the participant's consent, enable the camera, and grant browser permission. Use a pseudonymous account such as `demo-user`. Keep the same template throughout each comparison group. Restart the server to clear all templates when a fresh enrollment is needed.
 
-| ID | Thao tác | Kỳ vọng baseline / thông tin cần ghi | Thực tế |
+| ID | Procedure | Baseline expectation / information to record | Actual result |
 |---|---|---|---|
-| M0 | Bấm kiểm tra tải model không cần camera | 3 model tải được trong browser; ghi browser/lỗi | Đạt khi kiểm tra bản PoC mới ngày 12/11/2026 trong in-app browser |
-| M1 | Người đã đồng ý tạo template rồi xác minh lại | Ghi distance, threshold, match, camera và ánh sáng | Người dùng báo 2 MATCH: 0.5910 và 0.2142; còn thiếu thiết bị/điều kiện |
-| M2 | Cùng người, thay nhẹ tư thế và ánh sáng | Ghi riêng từng lượt, gồm cả lượt không khớp | Pending |
-| M3 | Người khác có consent claim cùng account M1 | Mong đợi NO_MATCH; ghi distance và kết quả thật | Pending |
-| P1 | Ảnh đúng người trên điện thoại, giữ yên | Có thể match; ghi phone, độ sáng, khoảng cách, kết quả | Pending |
-| P2 | Di chuyển ảnh điện thoại | Ghi distance/match hoặc no-face theo thực tế | Pending |
-| P3 | Nghiêng màn hình điện thoại | Ghi góc tương đối, distance/kết quả | Pending |
-| P4 | Đổi độ sáng màn hình | Ghi mức sáng và kết quả từng lượt | Pending |
-| C1 | Dừng camera khi đang xử lý | Tracks dừng, thao tác client bị hủy; ghi lỗi nếu có | Pending |
-| C2 | Từ chối quyền camera từ đầu | Thông báo bị từ chối, không gửi descriptor | Pending |
-| C3 | Không có khuôn mặt | NO_FACE, không gửi descriptor | Pending |
-| C4 | Hai khuôn mặt có consent cùng vào khung | MULTIPLE_FACES, không tạo/verify template | Pending |
-| C5 | Thu hồi quyền hoặc đổi tab | Camera dừng, không tiếp tục capture | Pending |
+| M0 | Check model loading without opening the camera | Three models load in the browser; record browser/errors | Passed when the updated PoC was checked in the in-app browser on 12 November 2026 |
+| M1 | Consenting participant creates a template and verifies again | Record distance, threshold, match result, camera, and lighting | User reported two MATCH results: 0.5910 and 0.2142; device/conditions still missing |
+| M2 | Same person with slight pose and lighting changes | Record each attempt, including non-matches | Pending |
+| M3 | Another consenting person claims the M1 account | Expect NO_MATCH; record distance and actual result | Pending |
+| P1 | Hold the enrolled person's photo still on a phone | A match is possible; record phone, brightness, distance, and result | Pending |
+| P2 | Move the phone photo | Record distance/match or no-face as observed | Pending |
+| P3 | Tilt the phone screen | Record approximate angle, distance, and result | Pending |
+| P4 | Change screen brightness | Record brightness and the result of each attempt | Pending |
+| C1 | Stop the camera during processing | Tracks stop and the client operation is cancelled; record any errors | Pending |
+| C2 | Deny camera permission initially | Permission-denied message; no descriptor sent | Pending |
+| C3 | Show no face | NO_FACE; no descriptor sent | Pending |
+| C4 | Two consenting faces enter the frame | MULTIPLE_FACES; no template creation or verification | Pending |
+| C5 | Revoke permission or switch tabs | Camera stops; capture does not continue | Pending |
 
-Gửi kết quả theo mẫu: `ID | browser/camera/phone | ánh sáng/tư thế/độ sáng |
-distance (nếu có) | match/non-match/no-face/lỗi | ghi chú`. Không gửi descriptor,
-ảnh khuôn mặt hay tên thật. Đã có hai lượt người đăng ký; người sai và ảnh điện thoại chưa có kết quả.
-Không suy diễn “đã chấp nhận ảnh điện thoại” từ lý thuyết hay vector tổng hợp.
+Report results using: `ID | browser/camera/phone | lighting/pose/brightness | distance (if available) | match/non-match/no-face/error | notes`. Do not send descriptors, face images, or real names. Two enrolled-person results have been reported; other-person and phone-photo results have not. Do not infer that a phone photo was accepted from theory or synthetic vectors.
 
-## Hạn chế và quyết định Ngày 2
+## Limitations and the Day 2 Decision
 
-- Ảnh điện thoại có thể giữ đủ thông tin danh tính để match; đây là khả năng của baseline,
-  chưa phải kết quả camera đã quan sát trong phiên này.
-- Client descriptor có thể giả/replay. Chưa có trusted enrollment, liveness, transaction,
-  session, rate limiting hoặc DB bền vững. CSP và validation không sửa được giới hạn đó.
-- Threshold chưa hiệu chỉnh; điều kiện của hai lượt đã báo và hành vi trên thiết bị còn cần xác nhận.
-- Template mất khi restart. Dừng capture không thu hồi request server đã nhận.
-- Ở phiên Ngày 1 chưa triển khai Ngày 2. Ngày 12/11/2026 đã tiếp tục PoC, xem `day-02-results.md`.
-  Bước đầu Ngày 2 là PoC chuỗi mắt + quay đầu,
-  theo dõi chuyển trạng thái qua nhiều frame và kiểm thử thật với người/ảnh điện thoại;
-  Ngày 3 thêm random challenge/TTL/single-use và thử video theo kế hoạch.
-- Chỉ chọn hướng PAD tiếp theo dựa trên kết quả thật; không dùng blink/pose giả lập để tuyên bố đạt.
+- A phone photo may retain enough identity information to match. This is a baseline risk, not an observed phone-photo result from this session.
+- Client descriptors can be forged or replayed. Day 1 did not implement trusted enrollment, liveness, transactions, sessions, rate limiting, or persistent storage. CSP and validation do not resolve those limitations.
+- The threshold is uncalibrated. The conditions of the two reported trials and behavior on the user's devices still need confirmation.
+- Restarting the server loses templates. Stopping capture cannot retract a request already received by the server.
+- Day 2 was not implemented during the original Day 1 session. Work continued on 12 November 2026; see [Day 2 results](day-02-results.md). Its first task was an eye/head-turn sequence PoC using transitions across multiple frames and real participant/phone-photo testing. Day 3 was planned to add random challenges, TTL, single use, and video trials.
+- Further PAD decisions must rely on actual results. Simulated blink/pose data must not be used to claim that liveness has passed.
 
 ## Git / GitHub
 
-- `8667063`: baseline webcam, model, in-memory matching API và 13 kiểm thử.
-- README và báo cáo này được commit riêng sau khi kiểm tra.
-- Người dùng yêu cầu tự tạo repo `secure-face-auth-web` (Public), sẽ gửi URL sau.
-  Chưa có remote, chưa push và không tự tạo repository GitHub.
-- Không có .env, ảnh, descriptor thật, model weights, secret hoặc tài liệu tmp trong commit.
+- `8667063`: webcam baseline, models, in-memory matching API, and 13 tests.
+- The README and this report were committed separately after checks.
+- At the original Day 1 handoff, the user planned to create the public `secure-face-auth-web` repository and provide its URL. No remote or push existed at that point, and the repository was not created automatically.
+- Subsequent publication on 12 November 2026 pushed snapshot `f6a384b` to [Kien118/secure-face-auth-web](https://github.com/Kien118/secure-face-auth-web). This does not change the historical Day 1 test results.
+- Commits contain no `.env`, face images, real descriptors, model weights, secrets, or temporary reference files.
 
-**Chưa đánh dấu hoàn thành Ngày 1:** cần ghi thêm điều kiện của hai lượt đã báo,
-thực hiện và ghi nhận các lượt còn thiếu trong M2–M3/P1–P4/C1–C5.
+**Day 1 is not marked complete:** add the missing conditions for the two reported trials and perform/document the remaining M2–M3/P1–P4/C1–C5 checks.

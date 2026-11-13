@@ -20,13 +20,25 @@ function fixture(options = {}) {
   let time = 1000;
   const engine = new FaceEngine();
   engine.enroll({ accountId: 'alice', descriptor: descriptor() });
-  const challenges = new LivenessChallenges(engine, { now: () => time, ...options });
+  const challenges = new LivenessChallenges(engine, { now: () => time, random: () => 0, ...options });
+  const tokens = new Map();
   return { engine, challenges, advance: (ms = 200) => { time += ms; },
+    create(body = { accountId: 'alice' }) {
+      const result = challenges.create(body);
+      tokens.set(result.challengeId, result.sampleToken);
+      return result;
+    },
+    send(id, body) {
+      const result = challenges.submit(id, { sampleToken: tokens.get(id), ...body });
+      if (result.sampleToken) tokens.set(id, result.sampleToken);
+      return result;
+    },
+    token: id => tokens.get(id),
     evidence: (pose = {}) => ({ descriptor: descriptor(), landmarks: landmarks(pose) }) };
 }
 function sample(f, id, pose = {}) {
   f.advance();
-  return f.challenges.submit(id, f.evidence(pose));
+  return f.send(id, f.evidence(pose));
 }
 
 test('landmark measurements preserve EAR and nose displacement under in-plane rotation', () => {
@@ -44,7 +56,7 @@ test('landmark measurements preserve EAR and nose displacement under in-plane ro
 
 test('complete ordered sequence checks every sample but never grants authentication', () => {
   const f = fixture();
-  const created = f.challenges.create({ accountId: 'alice' });
+  const created = f.create();
   const id = created.challengeId;
   assert.equal(created.totalSteps, 5);
   assert.equal(created.authenticated, false);
@@ -64,7 +76,7 @@ test('complete ordered sequence checks every sample but never grants authenticat
 });
 
 test('static poses and out-of-order actions cannot complete the sequence', () => {
-  const f = fixture(); const { challengeId: id } = f.challenges.create({ accountId: 'alice' });
+  const f = fixture(); const { challengeId: id } = f.create();
   assert.equal(sample(f, id, { ear: 0.1 }).step, 0);
   sample(f, id); assert.equal(sample(f, id, { ear: 0.1 }).step, 0);
   sample(f, id); assert.equal(sample(f, id).step, 1);
@@ -76,7 +88,7 @@ test('static poses and out-of-order actions cannot complete the sequence', () =>
 });
 
 test('turn and return are measured relative to the initial neutral pose', () => {
-  const f = fixture(); const { challengeId: id } = f.challenges.create({ accountId: 'alice' });
+  const f = fixture(); const { challengeId: id } = f.create();
   let result;
   for (const pose of [{ noseOffset: 0.08 }, { ear: 0.1, noseOffset: 0.08 },
     { noseOffset: 0.08 }, { noseOffset: -0.17 }, { noseOffset: 0.08 }]) {
@@ -86,10 +98,10 @@ test('turn and return are measured relative to the initial neutral pose', () => 
 });
 
 test('wrong identity at a later step terminates the account-bound challenge', () => {
-  const f = fixture(); const { challengeId: id } = f.challenges.create({ accountId: 'alice' });
+  const f = fixture(); const { challengeId: id } = f.create();
   sample(f, id); sample(f, id);
   const evidence = f.evidence({ ear: 0.1 }); evidence.descriptor.fill(1); f.advance();
-  const result = f.challenges.submit(id, evidence);
+  const result = f.send(id, evidence);
   assert.equal(result.status, 'NO_MATCH');
   assert.equal(result.authenticated, false);
   assert.equal(result.liveness, 'NOT_EVALUATED');
@@ -107,8 +119,8 @@ test('invalid evidence, fake flags, account replacement and geometry consume the
     f => ({ ...f.evidence(), landmarks: landmarks().slice(1) })
   ];
   for (const make of invalid) {
-    const f = fixture(); const { challengeId: id } = f.challenges.create({ accountId: 'alice' });
-    assert.throws(() => f.challenges.submit(id, make(f)));
+    const f = fixture(); const { challengeId: id } = f.create();
+    assert.throws(() => f.send(id, make(f)));
     assert.throws(() => sample(f, id), /CHALLENGE_NOT_FOUND/);
   }
   assert.throws(() => measureLandmarks(landmarks().map(p => p.map(() => '0'))), /INVALID_LANDMARKS/);
@@ -116,15 +128,15 @@ test('invalid evidence, fake flags, account replacement and geometry consume the
 
 test('server time enforces sample spacing, expiry and cancellation', () => {
   const f = fixture({ timeoutMs: 1000 });
-  const first = f.challenges.create({ accountId: 'alice' }).challengeId;
-  f.challenges.submit(first, f.evidence());
+  const first = f.create().challengeId;
+  f.send(first, f.evidence());
   f.advance(149);
-  assert.throws(() => f.challenges.submit(first, f.evidence()), /SAMPLE_TOO_FAST/);
+  assert.throws(() => f.send(first, f.evidence()), /SAMPLE_TOO_FAST/);
   assert.throws(() => sample(f, first), /CHALLENGE_NOT_FOUND/);
-  const expired = f.challenges.create({ accountId: 'alice' }).challengeId;
+  const expired = f.create().challengeId;
   f.advance(1000);
-  assert.throws(() => f.challenges.submit(expired, f.evidence()), /CHALLENGE_EXPIRED/);
-  const cancelled = f.challenges.create({ accountId: 'alice' }).challengeId;
+  assert.throws(() => f.send(expired, f.evidence()), /CHALLENGE_EXPIRED/);
+  const cancelled = f.create().challengeId;
   assert.equal(f.challenges.cancel(cancelled).authenticated, false);
   assert.throws(() => sample(f, cancelled), /CHALLENGE_NOT_FOUND/);
 });
@@ -132,20 +144,88 @@ test('server time enforces sample spacing, expiry and cancellation', () => {
 test('creation validates account/template, caps RAM and reclaims expired challenges', () => {
   const f = fixture({ maxChallenges: 1, timeoutMs: 1000 });
   for (const body of [null, [], {}, { accountId: '../alice' }, { accountId: 'alice', matched: true }]) {
-    assert.throws(() => f.challenges.create(body));
+    assert.throws(() => f.create(body));
   }
-  assert.throws(() => f.challenges.create({ accountId: 'bob' }), /NO_TEMPLATE/);
-  const id = f.challenges.create({ accountId: 'alice' }).challengeId;
-  assert.throws(() => f.challenges.create({ accountId: 'alice' }), /CHALLENGE_CAPACITY/);
+  assert.throws(() => f.create({ accountId: 'bob' }), /NO_TEMPLATE/);
+  const id = f.create().challengeId;
+  assert.throws(() => f.create(), /CHALLENGE_CAPACITY/);
   f.advance(1000);
-  const next = f.challenges.create({ accountId: 'alice' }).challengeId;
+  const next = f.create().challengeId;
   assert.notEqual(next, id);
   assert.throws(() => sample(f, id), /CHALLENGE_NOT_FOUND/);
 });
 
 test('liveness configuration rejects non-finite and inverted thresholds', () => {
-  for (const options of [{ timeoutMs: 0 }, { maxChallenges: 0 }, { eyeOpen: NaN },
+  for (const options of [{ timeoutMs: 0 }, { stepTimeoutMs: 0 }, { stepTimeoutMs: Infinity }, { random: null }, { maxChallenges: 0 }, { eyeOpen: NaN },
     { eyeClosed: 0.3 }, { eyeOpen: Infinity }, { headCenter: 0.2 }, { headTurn: -1 }]) {
     assert.throws(() => new LivenessChallenges(new FaceEngine(), options), /Invalid liveness configuration/);
   }
+});
+
+test('server randomizes both action order and turn direction without exposing future actions', () => {
+  for (const order of [0, 1]) for (const direction of [0, 1]) {
+    const choices = [order, direction];
+    const f = fixture({ random: max => { assert.equal(max, 2); return choices.shift(); } });
+    let result = f.create();
+    const id = result.challengeId;
+    const blink = ['close_eyes', 'open_eyes'];
+    const turn = [direction === 0 ? 'turn_left' : 'turn_right', 'return_center'];
+    const expected = ['look_straight', ...(order === 0 ? [...blink, ...turn] : [...turn, ...blink])];
+    for (const action of expected) {
+      assert.equal(result.action, action);
+      assert.equal(result.plan, undefined);
+      assert.equal(result.steps, undefined);
+      const pose = action === 'close_eyes' ? { ear: 0.1 }
+        : action === 'turn_left' ? { noseOffset: -0.3 }
+          : action === 'turn_right' ? { noseOffset: 0.3 } : {};
+      sample(f, id, pose); result = sample(f, id, pose);
+    }
+    assert.equal(result.status, 'SEQUENCE_COMPLETE');
+    assert.equal(result.action, null);
+    assert.equal(result.sampleToken, undefined);
+    assert.equal(result.authenticated, false);
+  }
+  const f = fixture({ random: () => 2 });
+  assert.throws(() => f.create(), /Invalid liveness random source/);
+});
+
+test('each accepted sample rotates its token, including a pose which does not advance', () => {
+  const f = fixture(); const created = f.create(); const id = created.challengeId;
+  assert.match(created.sampleToken, /^[a-f0-9]{64}$/);
+  const wrongPose = sample(f, id, { ear: 0.1 });
+  assert.equal(wrongPose.step, 0);
+  assert.notEqual(wrongPose.sampleToken, created.sampleToken);
+  f.advance();
+  assert.throws(() => f.send(id, { ...f.evidence(), sampleToken: created.sampleToken }), /INVALID_SAMPLE_TOKEN/);
+  assert.throws(() => sample(f, id), /CHALLENGE_NOT_FOUND/);
+});
+
+test('missing, malformed and cross-challenge tokens are rejected and consume the target challenge', () => {
+  const f = fixture(); const first = f.create();
+  const invalid = [undefined, null, 0, '', 'A'.repeat(64), 'g'.repeat(64), 'a'.repeat(63), first.sampleToken];
+  for (const token of invalid) {
+    const target = f.create();
+    assert.throws(() => f.send(target.challengeId, { ...f.evidence(), sampleToken: token }), /INVALID_SAMPLE_TOKEN/);
+    assert.throws(() => sample(f, target.challengeId), /CHALLENGE_NOT_FOUND/);
+  }
+  assert.equal(sample(f, first.challengeId).status, 'CHALLENGE_ACTIVE');
+});
+
+test('step deadlines use server time, reset only after advancement, and are bounded by total expiry', () => {
+  const f = fixture({ stepTimeoutMs: 1000, timeoutMs: 3000, maxChallenges: 1 });
+  let result = f.create(); const id = result.challengeId;
+  assert.equal(result.stepExpiresAt, 2000);
+  sample(f, id); result = sample(f, id);
+  assert.equal(result.stepExpiresAt, 2400);
+  f.advance(500);
+  result = sample(f, id, { ear: 0.1 });
+  assert.equal(result.stepExpiresAt, 2400);
+  f.advance(300);
+  assert.throws(() => sample(f, id, { ear: 0.1 }), /STEP_EXPIRED/);
+  const second = f.create();
+  f.advance(1000);
+  assert.notEqual(f.create().challengeId, second.challengeId);
+  assert.throws(() => sample(f, second.challengeId), /CHALLENGE_NOT_FOUND/);
+  const short = fixture({ timeoutMs: 500, stepTimeoutMs: 15000 }).create();
+  assert.equal(short.stepExpiresAt, short.expiresAt);
 });

@@ -5,10 +5,10 @@ import { WorkspaceUI } from '../public/js/workspace-ui.js';
 function fixture() {
   const ids = ['camera-state', 'model-state', 'camera-placeholder', 'camera-stage', 'status-panel',
     'status-heading', 'metric-distance', 'metric-threshold', 'metric-ear', 'metric-pose', 'metric-mouth', 'metrics-panel',
-    'result-placeholder', 'challenge-progress', 'challenge-step', 'challenge-action', 'challenge-prompt',
+    'result-placeholder', 'pose-fill', 'pose-readout', 'challenge-step', 'challenge-action', 'challenge-prompt',
     'challenge-panel', 'challenge-timer', 'step-time', 'attempt-time', 'checks-panel', 'checks-title', 'checks-list'];
   // Minimal element: textContent = '' clears children, append keeps them, text() flattens like the DOM.
-  const element = () => ({ dataset: {}, hidden: false, max: 5, value: 0, className: '', children: [],
+  const element = () => ({ dataset: {}, style: {}, hidden: false, max: 5, value: 0, className: '', children: [],
     get textContent() { return this.children.map(c => (typeof c === 'string' ? c : c.textContent)).join('') || this.text || ''; },
     set textContent(v) { this.children = []; this.text = v; },
     append(...items) { this.children.push(...items); } });
@@ -70,12 +70,12 @@ test('countdown uses returned deadlines, advances steps without extra intervals,
   assert.equal(f.nodes['step-time'].textContent, '14s');
   f.ui.updateChallenge(active({ step: 1, action: 'tilt_left', stepExpiresAt: 17000 }));
   assert.equal(f.starts(), 1);
-  assert.equal(f.nodes['challenge-progress'].value, 1);
+  assert.equal(f.nodes['challenge-step'].textContent, 'Step 2 of 5');
   assert.equal(f.nodes['challenge-action'].textContent, 'Face screen, tilt to right shoulder');
   f.advance(15000);
   assert.equal(f.nodes['step-time'].textContent, '0s');
   assert.equal(f.nodes['challenge-panel'].dataset.state, 'active');
-  assert.equal(f.nodes['challenge-progress'].value, 1);
+  assert.equal(f.nodes['challenge-step'].textContent, 'Step 2 of 5');
 });
 
 test('completion and reset clear timers; identity failure retains the known step without NaN', () => {
@@ -83,13 +83,12 @@ test('completion and reset clear timers; identity failure retains the known step
   f.ui.updateChallenge(active());
   f.ui.updateChallenge({ status: 'SEQUENCE_COMPLETE', totalSteps: 5, step: 5, prompt: 'PoC sequence completed.' });
   assert.equal(f.stops(), 1);
-  assert.equal(f.nodes['challenge-progress'].value, 5);
+  assert.equal(f.nodes['challenge-step'].textContent, 'Sequence complete');
   assert.equal(f.nodes['challenge-timer'].hidden, true);
   f.ui.updateChallenge(active({ step: 2, action: 'center', prompt: 'Look straight ahead.' }));
   f.ui.updateChallenge({ status: 'NO_MATCH' });
   assert.equal(f.stops(), 2);
   assert.equal(f.nodes['challenge-panel'].dataset.state, 'failed');
-  assert.equal(f.nodes['challenge-progress'].value, 2);
   assert.equal(f.nodes['challenge-step'].textContent, 'Identity mismatch · Step 3 of 5');
   assert.equal(f.nodes['challenge-action'].textContent, 'Look straight, head upright');
   assert.equal(f.nodes['challenge-prompt'].textContent, 'Look straight ahead.');
@@ -108,7 +107,6 @@ test('local failure retains the last instruction and progress for recording the 
   ui.updateChallenge(active({ step: 3, action: 'turn_right', prompt: 'Turn right in the preview.' }));
   ui.failChallenge('Capture failed');
   assert.equal(nodes['challenge-panel'].dataset.state, 'failed');
-  assert.equal(nodes['challenge-progress'].value, 3);
   assert.equal(nodes['challenge-step'].textContent, 'Capture failed · Step 4 of 5');
   assert.equal(nodes['challenge-prompt'].textContent, 'Turn right in the preview.');
   assert.equal(nodes['challenge-timer'].hidden, true);
@@ -135,4 +133,28 @@ test('server requirements render as "value / op target" with only the value colo
   ui.resetMetrics();
   assert.equal(nodes['checks-panel'].hidden, true);
   assert.equal(nodes['checks-list'].children.length, 0);
+});
+
+test('the pose meter fills toward the requested side from the server checks', () => {
+  const { ui, nodes } = fixture();
+  const tilt = (value, pass) => active({ action: 'tilt_left', checksFor: 'tilt_left', checks: [
+    { label: 'Identity distance', value: 0.3, op: '≤', target: 0.6, pass: true },
+    { label: 'Eyes open (EAR)', value: 0.3, op: '≥', target: 0.25, pass: true },
+    { label: 'Turn, keep below (|nose offset|)', value: 0.02, op: '<', target: 0.15, pass: true },
+    { label: 'Head tilt (°)', value, op: '≥', target: 12, pass }] });
+  ui.updateChallenge(tilt(6, false)); // tilt_left = the user's right shoulder: fills rightward, half way
+  assert.deepEqual([nodes['pose-fill'].style.left, nodes['pose-fill'].style.width], ['50%', '25%']);
+  assert.equal(nodes['pose-fill'].dataset.pass, 'false');
+  assert.equal(nodes['pose-readout'].textContent, '6.0 / ≥ 12.0');
+  assert.equal(nodes['pose-readout'].children[0].className, 'fail');
+  ui.updateChallenge(tilt(15, true));
+  assert.deepEqual([nodes['pose-fill'].style.left, nodes['pose-fill'].style.width], ['50%', '50%']);
+  assert.equal(nodes['pose-fill'].dataset.pass, 'true');
+  ui.updateChallenge(active({ action: 'turn_right', checksFor: 'turn_right', checks: [
+    { label: 'Turn (nose offset)', value: 0.075, op: '≥', target: 0.15, pass: false }] }));
+  assert.deepEqual([nodes['pose-fill'].style.left, nodes['pose-fill'].style.width], ['25%', '25%']); // leftward
+  // Checks from the previous action (the step just advanced) leave the new action's meter empty.
+  ui.updateChallenge(active({ action: 'center', checksFor: 'turn_right', checks: [] }));
+  assert.equal(nodes['pose-fill'].style.width, '0%');
+  assert.equal(nodes['pose-readout'].textContent, '—');
 });

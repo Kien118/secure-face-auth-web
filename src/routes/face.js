@@ -37,6 +37,12 @@ export function faceRoutes(engine, { analyzer, sessions, limiter, ...options } =
     res.status(201).json(engine.enroll({ accountId, descriptor }));
   });
 
+  // Lets the page show which step comes next (enroll, then verify, then challenge). It reveals only
+  // whether an account is enrolled, which NO_TEMPLATE from the other routes already does.
+  router.get('/templates/:accountId', (req, res) => {
+    res.json({ status: 'TEMPLATE_STATUS', enrolled: engine.hasTemplate(validateAccountId(req.params.accountId)) });
+  });
+
   // Identity-only baseline (no liveness, never a session): kept for the demo comparison.
   router.post('/verify', async (req, res) => {
     const { accountId, frame } = exactKeys(req.body, ['accountId', 'frame']);

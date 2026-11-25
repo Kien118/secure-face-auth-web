@@ -56,16 +56,40 @@ function status(code) {
 }
 function clearResults() { workspace.resetMetrics(); workspace.resetChallenge(); }
 const camera = new Camera($('video'), () => stop());
+// Guided order: enroll, then a matching 1:1 verify, then the challenge. This is page guidance only;
+// the server still refuses every check for an account without a template.
+const flow = { enrolled: false, verified: false };
+let flowCheck = 0;
+async function refreshFlow() {
+  flow.enrolled = flow.verified = false;
+  buttons();
+  const accountId = $('account').value.trim();
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(accountId)) return;
+  const current = ++flowCheck;
+  try {
+    const response = await fetch(`/api/templates/${accountId}`);
+    const result = await response.json();
+    if (current === flowCheck && response.ok) { flow.enrolled = result.enrolled === true; buttons(); }
+  } catch { /* Unknown state keeps enroll as the next step. */ }
+}
 function buttons() {
   $('models').disabled = busy || camera.active;
   $('start').disabled = busy || camera.active;
   $('stop').disabled = !busy && !camera.active;
-  $('enroll').disabled = $('verify').disabled = $('challenge').disabled = busy || !ready || !camera.active;
+  const idle = busy || !ready || !camera.active;
+  $('enroll').disabled = idle;
+  $('verify').disabled = idle || !flow.enrolled;
+  $('challenge').disabled = idle || !flow.verified;
+  const next = !flow.enrolled ? 'enroll' : !flow.verified ? 'verify' : 'challenge';
+  for (const id of ['enroll', 'verify', 'challenge']) {
+    $(id).className = `button ${id === next ? 'button-primary' : 'button-outline'}`;
+  }
   $('account').disabled = busy;
   $('video').hidden = !camera.active;
   workspace.setDevices({ cameraActive: camera.active, modelsReady: ready, busy });
   $('capture-hint').textContent = busy ? 'A check is running. Stop the camera to cancel.'
-    : camera.active && ready ? 'Show exactly one face. Create a template before your first check.'
+    : camera.active && ready ? (!flow.enrolled ? 'Step 1: enroll your face for this account.'
+      : !flow.verified ? 'Step 2: verify your face (1:1) to unlock the challenge.' : 'Step 3: log in with the challenge.')
       : 'Start the camera to enable capture actions.';
 }
 $('models').addEventListener('click', async () => {
@@ -110,6 +134,7 @@ $('account').addEventListener('input', () => {
   if (busy) return;
   clearResults();
   status('ACCOUNT_CHANGED');
+  refreshFlow();
 });
 for (const [id, endpoint] of [['enroll', 'templates'], ['verify', 'verify']]) {
   $(id).addEventListener('click', async () => {
@@ -128,8 +153,12 @@ for (const [id, endpoint] of [['enroll', 'templates'], ['verify', 'verify']]) {
       if (current !== operation) return;
       status(result.status ?? 'SERVER_ERROR');
       workspace.renderMetrics(result);
+      if (result.status === 'TEMPLATE_CREATED') flow.enrolled = true;
+      if (endpoint === 'verify') flow.verified = result.status === 'MATCH';
     } catch (error) {
       if (current === operation) status(error.code ?? 'SERVER_ERROR');
+      if (error.code === 'TEMPLATE_EXISTS') flow.enrolled = true;
+      if (error.code === 'NO_TEMPLATE') flow.enrolled = flow.verified = false;
     } finally { if (current === operation) { busy = false; request = undefined; buttons(); } }
   });
 }
@@ -159,4 +188,4 @@ $('challenge').addEventListener('click', async () => {
 });
 window.addEventListener('pagehide', stop);
 document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); });
-buttons();
+refreshFlow();

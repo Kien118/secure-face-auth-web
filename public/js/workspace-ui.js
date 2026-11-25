@@ -3,6 +3,9 @@ const actionLabels = {
   tilt_right: 'Face screen, tilt to left shoulder', center: 'Look straight, head upright', turn_left: 'Turn to your right',
   turn_right: 'Turn to your left'
 };
+// Which side of the meter fills, in the user's own (mirrored) terms: turn_left / tilt_left move the
+// nose / head toward raw image left, which is the user's right. 0 = neutral pose, fills both ways.
+const meterSide = { turn_left: 1, tilt_left: 1, turn_right: -1, tilt_right: -1 };
 const statusLabels = {
   TEMPLATE_CREATED: ['success', 'Template created'], MATCH: ['success', 'Identity match'],
   PROCESSING: ['progress', 'Processing capture'], CAMERA_STARTING: ['progress', 'Starting camera'],
@@ -90,9 +93,8 @@ export class WorkspaceUI {
     }
     const total = Number.isInteger(result.totalSteps) && result.totalSteps > 0 ? result.totalSteps : 1;
     const completed = complete ? total : Math.max(0, Math.min(Number.isInteger(result.step) ? result.step : 0, total - 1));
-    this.$('challenge-progress').max = total;
-    this.$('challenge-progress').value = completed;
     this.progress = { step: completed, total };
+    this.#renderMeter(result);
     this.$('challenge-panel').dataset.state = complete ? 'complete' : 'active';
     this.$('challenge-step').textContent = complete ? 'Sequence complete' : `Step ${completed + 1} of ${total}`;
     this.$('challenge-action').textContent = complete ? 'Sequence completed'
@@ -104,6 +106,30 @@ export class WorkspaceUI {
     this.deadlines = { step: result.stepExpiresAt, attempt: result.expiresAt };
     this.#tick();
     if (this.interval === null) this.interval = this.setInterval(() => this.#tick(), 200);
+  }
+  // Progress of the current action toward the server's threshold, from the server's own checks.
+  // After the step advances the checks belong to the previous action, so the meter restarts empty.
+  #renderMeter(result) {
+    const fill = this.$('pose-fill');
+    const readout = this.$('pose-readout');
+    const checks = result.checksFor === result.action && Array.isArray(result.checks) ? result.checks : [];
+    const pose = checks.filter(item => item.label !== 'Identity distance' && item.label !== 'Eyes open (EAR)');
+    const side = meterSide[result.action] ?? 0;
+    const main = side ? pose.find(item => item.op === '≥') : null;
+    const share = item => (item.pass ? 1 : item.op === '≥' ? item.value / item.target : item.target / item.value);
+    const fraction = pose.length ? Math.max(0, Math.min(1, main ? share(main) : Math.min(...pose.map(share)))) : 0;
+    const half = fraction * 50;
+    fill.style.width = `${side ? half : half * 2}%`;
+    fill.style.left = `${side > 0 ? 50 : 50 - half}%`; // grows rightward from the middle, or leftward/both ways
+    fill.dataset.pass = String(checks.length > 0 && checks.every(item => item.pass));
+    readout.textContent = '';
+    const shown = main ?? pose[0];
+    if (!shown || !Number.isFinite(shown.value) || !Number.isFinite(shown.target)) { readout.textContent = '—'; return; }
+    const digits = Number.isInteger(shown.target) ? 1 : 2;
+    const value = this.document.createElement('span');
+    value.className = shown.pass ? 'pass' : 'fail';
+    value.textContent = shown.value.toFixed(digits);
+    readout.append(value, ` / ${shown.op} ${shown.target.toFixed(digits)}`);
   }
   #tick() {
     if (!this.deadlines) return;
@@ -128,7 +154,7 @@ export class WorkspaceUI {
     this.#stopTimer();
     this.progress = null;
     this.$('challenge-panel').dataset.state = 'idle';
-    this.$('challenge-progress').value = 0;
+    this.#renderMeter({});
     this.$('challenge-step').textContent = label;
     this.$('challenge-action').textContent = 'Your next instruction will appear here';
     this.$('challenge-prompt').textContent = '';

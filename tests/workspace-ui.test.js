@@ -66,7 +66,7 @@ test('countdown uses returned deadlines, advances steps without extra intervals,
   f.ui.updateChallenge(active({ step: 1, action: 'tilt_left', stepExpiresAt: 17000 }));
   assert.equal(f.starts(), 1);
   assert.equal(f.nodes['challenge-progress'].value, 1);
-  assert.equal(f.nodes['challenge-action'].textContent, 'Tilt to your right shoulder');
+  assert.equal(f.nodes['challenge-action'].textContent, 'Face screen, tilt to right shoulder');
   f.advance(15000);
   assert.equal(f.nodes['step-time'].textContent, '0s');
   assert.equal(f.nodes['challenge-panel'].dataset.state, 'active');

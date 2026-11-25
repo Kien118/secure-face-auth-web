@@ -5,13 +5,13 @@ const prompts = {
   look_straight: 'Look straight ahead and keep your eyes open.',
   // tilt_left/tilt_right follow the same raw-image convention as the turns: tilt_left moves the top of
   // the head toward image left, which is the user's own right shoulder.
-  tilt_left: 'Keep looking at the screen. Tilt your head toward your right shoulder.',
-  tilt_right: 'Keep looking at the screen. Tilt your head toward your left shoulder.',
+  tilt_left: 'Face the screen directly (do not turn), then tilt your head toward your right shoulder.',
+  tilt_right: 'Face the screen directly (do not turn), then tilt your head toward your left shoulder.',
   // turn_left/turn_right name the nose direction in the raw (unmirrored) camera image, which is
   // opposite to the user's own side: turning to your right moves the nose toward image left.
-  turn_left: 'Keep your eyes open. Turn your head slightly to your right.',
-  turn_right: 'Keep your eyes open. Turn your head slightly to your left.',
-  center: 'Look straight ahead with your head upright.'
+  turn_left: 'Keep your head upright (no tilt) and turn your face slightly to your right.',
+  turn_right: 'Keep your head upright (no tilt) and turn your face slightly to your left.',
+  center: 'Face the screen directly with your head upright.'
 };
 // Target pose per action as [yaw, roll]: -1/1 = required direction, 0 = neutral.
 const POSES = { center: [0, 0], turn_left: [-1, 0], turn_right: [1, 0], tilt_left: [0, -1], tilt_right: [0, 1] };

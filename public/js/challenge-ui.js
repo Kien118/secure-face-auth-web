@@ -31,7 +31,7 @@ export async function runChallenge({ video, accountId, signal, onUpdate }) {
       checkActive();
       let result;
       try {
-        const frame = await captureFrame(video);
+        const frame = await captureFrame(video, undefined, { allowNoFace: true });
         checkActive();
         result = await postJson(`/api/liveness/challenges/${challengeId}/samples`, {
           frame, sampleToken: state.sampleToken

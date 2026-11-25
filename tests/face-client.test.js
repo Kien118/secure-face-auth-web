@@ -14,6 +14,9 @@ test('one-face gate rejects no/multiple faces, returns a JPEG frame and clears t
     await assert.rejects(captureFrame(video, api(faces)), e => e.code === code);
     assert.equal(canvas.width, 0);
   }
+  // Challenge mode lets the server decide when the tiny detector misses; two faces are still rejected.
+  assert.equal(await captureFrame(video, api([]), { allowNoFace: true }), 'data:image/jpeg;base64,AAAA');
+  await assert.rejects(captureFrame(video, api([{}, {}]), { allowNoFace: true }), e => e.code === 'MULTIPLE_FACES');
   // The browser sends only the image: no descriptor or landmarks leave the client.
   assert.equal(await captureFrame(video, api([{}])), 'data:image/jpeg;base64,AAAA');
   assert.equal(canvas.height, 0);

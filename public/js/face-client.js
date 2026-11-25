@@ -8,7 +8,9 @@ export async function loadModels(api = globalThis.faceapi) {
   await modelPromise;
 }
 
-export async function captureFrame(video, api = globalThis.faceapi) {
+// allowNoFace: send the frame even if the tiny browser detector misses the face (a turned head);
+// the server's stronger detector decides. Multiple faces are still rejected locally.
+export async function captureFrame(video, api = globalThis.faceapi, { allowNoFace = false } = {}) {
   if (!video.videoWidth || !video.videoHeight || video.readyState < 2) {
     throw Object.assign(new Error(), { code: 'CAMERA_NOT_READY' });
   }
@@ -19,7 +21,8 @@ export async function captureFrame(video, api = globalThis.faceapi) {
   try {
     canvas.getContext('2d').drawImage(video, 0, 0);
     const faces = await api.detectAllFaces(canvas, new api.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 }));
-    if (faces.length !== 1) throw Object.assign(new Error(), { code: faces.length ? 'MULTIPLE_FACES' : 'NO_FACE' });
+    if (faces.length > 1) throw Object.assign(new Error(), { code: 'MULTIPLE_FACES' });
+    if (!faces.length && !allowNoFace) throw Object.assign(new Error(), { code: 'NO_FACE' });
     return canvas.toDataURL('image/jpeg', 0.85);
   } catch (error) {
     if (!error.code) error.code = 'MODEL_ERROR';

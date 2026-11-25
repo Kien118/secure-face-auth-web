@@ -73,16 +73,18 @@ test('late create response after cancellation is deleted without capturing', asy
   assert.deepEqual(methods, ['POST', 'DELETE']);
 });
 
-test('a lost face skips frames without sending them and keeps the attempt alive', async t => {
-  const methods = []; const updates = []; let captures = 0;
+test('frames the tiny browser detector misses still go to the server; a server NO_FACE is skipped', async t => {
+  const methods = []; const updates = []; let samples = 0;
   setup(t, async (url, options) => {
     methods.push(options.method);
-    return response(url.endsWith('/samples') ? { status: 'SEQUENCE_COMPLETE' } : challenge());
-  }, async () => (++captures < 3 ? [] : [face]));
+    if (!url.endsWith('/samples')) return response(challenge());
+    // The server's stronger detector also misses the first frame, then sees the face.
+    return ++samples === 1 ? response({ status: 'NO_FACE' }, false) : response({ status: 'SEQUENCE_COMPLETE' });
+  }, async () => []); // tiny detector never sees the turned face
   const result = await runChallenge({ video, accountId: 'alice', signal: new AbortController().signal, onUpdate: r => updates.push(r) });
   assert.equal(result.status, 'SEQUENCE_COMPLETE');
-  assert.deepEqual(methods, ['POST', 'POST', 'DELETE']); // create, one real sample, cleanup
-  assert.equal(updates.filter(update => update.faceLost).length, 2);
+  assert.deepEqual(methods, ['POST', 'POST', 'POST', 'DELETE']); // create, skipped sample, accepted sample, cleanup
+  assert.equal(updates.filter(update => update.faceLost).length, 1);
 });
 
 test('multiple faces still end the attempt and never submit a sample', async t => {

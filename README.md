@@ -32,9 +32,13 @@ gate for fast feedback only) → JPEG frame → same-origin POST. Enrollment sen
 frames, the baseline sends 1, and the challenge sends one frame per sample.
 The browser computes no descriptor or landmarks, so editing client JavaScript cannot forge evidence.
 
-Server: decode JPEG → the same pinned face-api.js weights run in Node
-(`@vladmandic/face-api` on the TF.js WASM backend, `src/services/face-analyzer.js`) →
-descriptor + 68 landmarks → strict validation → account-bound template → Euclidean
+Server: decode JPEG → `@vladmandic/face-api` on the TF.js WASM backend
+(`src/services/face-analyzer.js`) runs SSD MobileNet v1 + the full 68-point landmark net,
+which keep tracking turned and tilted faces that the browser's tiny models lose, plus the
+pinned recognition net (byte-identical to the browser copy, so stored templates stay valid). During a challenge the browser sends frames even when its tiny
+detector misses the face; the server decides (about 0.3–0.5 s per frame on a laptop CPU).
+Turn and tilt thresholds were set with the tiny landmarks and should be re-checked.
+Server output: descriptor + 68 landmarks → strict validation → account-bound template → Euclidean
 distance → `distance <= threshold`. Frames are processed in memory and discarded.
 Templates are stored in `data/templates.json`, each sealed with AES-256-GCM using the
 account ID as associated data (`src/services/template-store.js`). A completed challenge

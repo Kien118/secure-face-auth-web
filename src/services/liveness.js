@@ -20,6 +20,9 @@ const STEP_CHOICES = 3;
 const MIN_HOLD = 2; // random 2..3 consecutive samples per action, never sent to the client
 const HOLD_CHOICES = 2;
 const sampleToken = () => randomBytes(32).toString('hex');
+const OPS = { '≥': (a, b) => a >= b, '≤': (a, b) => a <= b, '<': (a, b) => a < b };
+// One requirement of the evaluated action: shown to the user as "value / op target", pass or fail.
+const check = (label, value, op, target) => ({ label, value, op, target, pass: OPS[op](value, target) });
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
 export function measureLandmarks(points) {
@@ -139,25 +142,32 @@ export class LivenessChallenges {
       }
       const identity = this.engine.verify({ accountId: challenge.accountId, descriptor: body.descriptor });
       const metrics = measureLandmarks(body.landmarks);
+      const identityCheck = check('Identity distance', identity.distance, '≤', identity.threshold);
       if (!identity.matched) {
         this.#challenges.delete(id);
         this.limiter?.fail(challenge.accountId);
-        return { ...identity, status: 'NO_MATCH', sequencePassed: false, liveness: 'NOT_EVALUATED', authenticated: false };
+        return { ...identity, status: 'NO_MATCH', sequencePassed: false, liveness: 'NOT_EVALUATED', authenticated: false,
+          checksFor: challenge.plan[challenge.step], checks: [identityCheck] };
       }
       const offset = metrics.noseOffset - challenge.neutralOffset;
-      const centered = Math.abs(offset) <= this.headCenter;
-      const eyesOpen = metrics.ear >= this.eyeOpen;
       const action = challenge.plan[challenge.step];
       // Tilt is measured against this person's own neutral head roll from step 0.
       const tilt = metrics.roll - challenge.neutralRoll;
       const [yaw, roll] = POSES[action] ?? POSES.center;
       // A neutral axis must be strictly neutral only in the full center pose; while turning or tilting,
-      // the other axis just must not be in a required pose itself.
-      const yawOk = yaw ? yaw * offset >= this.headTurn : roll ? Math.abs(offset) < this.headTurn : centered;
-      const rollOk = action === 'look_straight' ? true // the baseline roll is being measured in this step
-        : roll ? roll * tilt >= this.headTiltDeg
-          : yaw ? Math.abs(tilt) < this.headTiltDeg : Math.abs(tilt) <= this.headLevelDeg;
-      const followsStep = eyesOpen && yawOk && rollOk;
+      // the other axis just must not be in a required pose itself. Directed values (yaw * offset,
+      // roll * tilt) are positive when moving the requested way.
+      const checks = [identityCheck, check('Eyes open (EAR)', metrics.ear, '≥', this.eyeOpen),
+        yaw ? check('Turn (nose offset)', yaw * offset, '≥', this.headTurn)
+          : roll ? check('Turn, keep below (|nose offset|)', Math.abs(offset), '<', this.headTurn)
+            : check('Centered (|nose offset|)', Math.abs(offset), '≤', this.headCenter)];
+      // look_straight measures the baseline roll itself, so it has no tilt requirement.
+      if (action !== 'look_straight') {
+        checks.push(roll ? check('Head tilt (°)', roll * tilt, '≥', this.headTiltDeg)
+          : yaw ? check('Tilt, keep below (|°|)', Math.abs(tilt), '<', this.headTiltDeg)
+            : check('Head level (|°|)', Math.abs(tilt), '≤', this.headLevelDeg));
+      }
+      const followsStep = checks.every(item => item.pass);
       challenge.lastSampleAt = now;
       // The neutral baseline needs two samples with a stable head roll; an unstable pair restarts from this sample.
       if (challenge.step === 0 && followsStep && challenge.consecutive === 1 &&
@@ -182,7 +192,7 @@ export class LivenessChallenges {
       }
       if (challenge.step === challenge.plan.length) { this.#challenges.delete(id); this.limiter?.reset(challenge.accountId); }
       else challenge.sampleToken = sampleToken();
-      return { ...this.#response(challenge), ear: metrics.ear, noseOffset: metrics.noseOffset, tilt,
+      return { ...this.#response(challenge), checksFor: action, checks, ear: metrics.ear, noseOffset: metrics.noseOffset, tilt,
         distance: identity.distance, threshold: identity.threshold };
     } catch (error) {
       this.#challenges.delete(id);

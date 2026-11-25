@@ -255,3 +255,23 @@ test('step deadlines use server time, reset only after advancement, and are boun
   const short = fixture({ timeoutMs: 500, stepTimeoutMs: 15000 }).create();
   assert.equal(short.stepExpiresAt, short.expiresAt);
 });
+
+test('each sample reports the requirements of the evaluated action, and they match the decision', () => {
+  const f = fixture(); const { challengeId: id } = f.create(); // look_straight, turn_left, center, turn_left
+  let result = sample(f, id);
+  assert.equal(result.checksFor, 'look_straight');
+  assert.deepEqual(result.checks.map(c => c.label), ['Identity distance', 'Eyes open (EAR)', 'Centered (|nose offset|)']);
+  sample(f, id);
+  result = sample(f, id, { noseOffset: -0.1 }); // not far enough for turn_left
+  assert.equal(result.checksFor, 'turn_left');
+  const turn = result.checks.find(c => c.label === 'Turn (nose offset)');
+  assert.ok(Math.abs(turn.value - 0.1) < 1e-9);
+  assert.deepEqual([turn.op, turn.target, turn.pass], ['≥', 0.15, false]);
+  assert.equal(result.checks.find(c => c.label === 'Tilt, keep below (|°|)').pass, true);
+  result = sample(f, id, { noseOffset: -0.3 });
+  assert.ok(result.checks.every(c => c.pass));
+  const mismatch = f.evidence(); mismatch.descriptor.fill(1); f.advance();
+  result = f.send(id, mismatch);
+  assert.equal(result.status, 'NO_MATCH');
+  assert.deepEqual(result.checks.map(c => [c.label, c.pass]), [['Identity distance', false]]);
+});

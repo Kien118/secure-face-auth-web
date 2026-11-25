@@ -1,4 +1,4 @@
-:root { color-scheme: light; --paper:#f4f5f0; --card:#fff; --ink:#182b28; --muted:#657169; --line:#e1e6dc; --green:#2c634e; --soft-green:#edf4ed; --amber:#805b31; }
+:root { color-scheme: light; --paper:#f4f5f0; --card:#fff; --ink:#182b28; --muted:#657169; --line:#e1e6dc; --green:#2c634e; --soft-green:#edf4ed; --amber:#805b31; --red:#a3372c; }
 * { box-sizing:border-box; }
 [hidden] { display:none !important; }
 body { margin:0; background:var(--paper); color:var(--ink); font:15px/1.6 'Segoe UI',system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
@@ -127,6 +127,13 @@ progress::-moz-progress-bar { background:var(--green); border-radius:8px; }
 .metrics-grid { display:grid; grid-template-columns:1fr 1fr; gap:19px 15px; margin:20px 0; }
 .metrics-grid>div>span { display:block; font-size:10px; color:var(--muted); margin-bottom:3px; }
 .metrics-grid output { font-size:24px; letter-spacing:-.8px; font-weight:500; font-variant-numeric:tabular-nums; }
+.checks-panel { margin:4px 0 16px; }
+.checks-list { list-style:none; margin:8px 0 0; padding:0; display:grid; gap:6px; }
+.checks-list li { display:flex; justify-content:space-between; gap:12px; font-size:12px; }
+.checks-list .check-label { color:var(--muted); }
+.checks-list .check-value { font-variant-numeric:tabular-nums; font-weight:500; }
+.check-value .pass { color:var(--green); }
+.check-value .fail { color:var(--red); }
 .metric-note { padding-top:12px; border-top:1px solid var(--line); font-size:9px; color:var(--muted); line-height:1.7; }
 .protocol-section { display:grid; grid-template-columns:1fr 1.8fr; gap:80px; margin:50px 0 42px; padding-top:34px; border-top:1px solid var(--line); }
 .protocol-intro h2 { font:28px/1.25 Georgia,serif; margin:10px 0; color:#3f5748; }

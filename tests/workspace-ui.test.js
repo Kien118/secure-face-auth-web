@@ -6,10 +6,15 @@ function fixture() {
   const ids = ['camera-state', 'model-state', 'camera-placeholder', 'camera-stage', 'status-panel',
     'status-heading', 'metric-distance', 'metric-threshold', 'metric-ear', 'metric-pose', 'metric-mouth', 'metrics-panel',
     'result-placeholder', 'challenge-progress', 'challenge-step', 'challenge-action', 'challenge-prompt',
-    'challenge-panel', 'challenge-timer', 'step-time', 'attempt-time'];
-  const nodes = Object.fromEntries(ids.map(id => [id, { dataset: {}, textContent: '', hidden: false, max: 5, value: 0 }]));
+    'challenge-panel', 'challenge-timer', 'step-time', 'attempt-time', 'checks-panel', 'checks-title', 'checks-list'];
+  // Minimal element: textContent = '' clears children, append keeps them, text() flattens like the DOM.
+  const element = () => ({ dataset: {}, hidden: false, max: 5, value: 0, className: '', children: [],
+    get textContent() { return this.children.map(c => (typeof c === 'string' ? c : c.textContent)).join('') || this.text || ''; },
+    set textContent(v) { this.children = []; this.text = v; },
+    append(...items) { this.children.push(...items); } });
+  const nodes = Object.fromEntries(ids.map(id => [id, element()]));
   let now = 1000; let tick; let starts = 0; let stops = 0;
-  const ui = new WorkspaceUI({ getElementById: id => {
+  const ui = new WorkspaceUI({ createElement: element, getElementById: id => {
     assert.ok(nodes[id], `Unknown UI element: ${id}`); return nodes[id];
   } }, { now: () => now, setInterval: callback => { starts++; tick = callback; return starts; },
     clearInterval: () => { stops++; tick = undefined; } });
@@ -107,4 +112,27 @@ test('local failure retains the last instruction and progress for recording the 
   assert.equal(nodes['challenge-step'].textContent, 'Capture failed · Step 4 of 5');
   assert.equal(nodes['challenge-prompt'].textContent, 'Turn right in the preview.');
   assert.equal(nodes['challenge-timer'].hidden, true);
+});
+
+test('server requirements render as "value / op target" with only the value colored by pass or fail', () => {
+  const { ui, nodes } = fixture();
+  ui.renderMetrics({ distance: 0.31, ear: 0.3, checksFor: 'tilt_left', checks: [
+    { label: 'Head tilt (°)', value: 10.04, op: '≥', target: 12, pass: false },
+    { label: 'Head tilt (°)', value: 15.2, op: '≥', target: 12, pass: true },
+    { label: 'Identity distance', value: 0.31, op: '≤', target: 0.6, pass: true },
+    { label: 'Broken', value: NaN, op: '≥', target: 1, pass: false }] });
+  assert.equal(nodes['checks-panel'].hidden, false);
+  assert.equal(nodes['checks-title'].textContent, 'Server requirements · Face screen, tilt to right shoulder');
+  const rows = nodes['checks-list'].children;
+  assert.equal(rows.length, 3); // non-finite values are not rendered
+  const [failing, passing, identity] = rows.map(row => row.children[1]);
+  assert.equal(failing.textContent, '10.0 / ≥ 12.0');
+  assert.equal(failing.children[0].className, 'fail');
+  assert.equal(passing.textContent, '15.2 / ≥ 12.0');
+  assert.equal(passing.children[0].className, 'pass');
+  assert.equal(identity.textContent, '0.310 / ≤ 0.600');
+  assert.equal(rows[0].children[0].textContent, 'Head tilt (°)');
+  ui.resetMetrics();
+  assert.equal(nodes['checks-panel'].hidden, true);
+  assert.equal(nodes['checks-list'].children.length, 0);
 });

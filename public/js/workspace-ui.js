@@ -21,6 +21,7 @@ export class WorkspaceUI {
   constructor(document, { now = Date.now, setInterval = globalThis.setInterval,
     clearInterval = globalThis.clearInterval } = {}) {
     this.$ = id => document.getElementById(id);
+    this.document = document;
     this.now = now;
     this.setInterval = setInterval.bind(globalThis);
     this.clearInterval = clearInterval.bind(globalThis);
@@ -49,7 +50,33 @@ export class WorkspaceUI {
     }
     const hasMetrics = Number.isFinite(result.distance) || Number.isFinite(result.ear);
     this.$('metrics-panel').hidden = !hasMetrics;
-    this.$('result-placeholder').hidden = hasMetrics;
+    this.$('result-placeholder').hidden = hasMetrics || Array.isArray(result.checks);
+    this.#renderChecks(result);
+  }
+  // "value / op target": only the measured value is colored, green when met and red when not.
+  #renderChecks(result) {
+    const list = this.$('checks-list');
+    list.textContent = '';
+    const checks = Array.isArray(result.checks) ? result.checks : [];
+    this.$('checks-panel').hidden = !checks.length;
+    if (!checks.length) return;
+    this.$('checks-title').textContent = `Server requirements · ${actionLabels[result.checksFor] ?? 'last sample'}`;
+    for (const item of checks) {
+      if (!Number.isFinite(item?.value) || !Number.isFinite(item?.target)) continue;
+      const digits = Number.isInteger(item.target) ? 1 : 3;
+      const value = this.document.createElement('span');
+      value.className = item.pass ? 'pass' : 'fail';
+      value.textContent = item.value.toFixed(digits);
+      const amount = this.document.createElement('span');
+      amount.className = 'check-value';
+      amount.append(value, ` / ${item.op} ${item.target.toFixed(digits)}`);
+      const label = this.document.createElement('span');
+      label.className = 'check-label';
+      label.textContent = item.label;
+      const row = this.document.createElement('li');
+      row.append(label, amount);
+      list.append(row);
+    }
   }
   resetMetrics() { this.renderMetrics({}); }
   updateChallenge(result) {

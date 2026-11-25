@@ -158,7 +158,13 @@ the user's own baseline. The server then draws 3–5 further actions from five p
 so there is no fixed "act, then return" rhythm (a turn can go straight into a tilt). Each action
 must be held for a random 2 or 3 consecutive samples, which the server never reveals.
 That gives 4³ + 4⁴ + 4⁵ = 1,344 action sequences (before hold timing), against 8 in Day 4's
-first version. Follow each displayed prompt rather than memorizing a previous attempt. The preview is mirrored (CSS only; frames sent to the server are not),
+first version. Follow each displayed prompt rather than memorizing a previous attempt.
+
+Every sample response also carries `checks`: the requirements of the action just evaluated, each as
+`{label, value, op, target, pass}` (identity distance, eyes open, turn and tilt). The step advances
+only when all of them pass for the hidden number of consecutive samples. The workspace shows them as
+`value / op target`, with the value green when met and red when not, which also gives
+per-sample evidence for the report. The preview is mirrored (CSS only; frames sent to the server are not),
 and prompts use the user's own left/right. Action names keep raw-image coordinates:
 `turn_left` (nose toward image left) is shown as "Turn to your right".
 

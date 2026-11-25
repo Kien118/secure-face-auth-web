@@ -12,7 +12,7 @@ const statusLabels = {
   MODEL_LOADING: ['progress', 'Loading models'], CHALLENGE_ACTIVE: ['progress', 'Follow the prompt'],
   CONSENT_REQUIRED: ['warning', 'Consent required'], NO_FACE: ['warning', 'No face detected'],
   MULTIPLE_FACES: ['warning', 'One face at a time'], CAMERA_STOPPED: ['warning', 'Camera stopped'],
-  CANCELLED: ['warning', 'Attempt cancelled'], SEQUENCE_COMPLETE: ['success', 'Logged in'], LOCKED: ['error', 'Account locked'], FACE_LOST: ['warning', 'Face lost, keep going'],
+  CANCELLED: ['warning', 'Attempt cancelled'], SEQUENCE_COMPLETE: ['success', 'Logged in'], LOCKED: ['error', 'Account locked'], IDENTITY_RETRY: ['warning', 'Identity uncertain'], FACE_LOST: ['warning', 'Face lost, keep going'],
   READY: ['neutral', 'Ready for a check'], MODEL_READY: ['neutral', 'Models ready'],
   CAMERA_NOT_STARTED: ['neutral', 'Start with consent'], NO_MATCH: ['error', 'No identity match'],
   ACCOUNT_CHANGED: ['neutral', 'Account updated'],
@@ -85,7 +85,8 @@ export class WorkspaceUI {
   }
   resetMetrics() { this.renderMetrics({}); }
   updateChallenge(result) {
-    const active = result.status === 'CHALLENGE_ACTIVE';
+    const paused = result.status === 'IDENTITY_RETRY';
+    const active = result.status === 'CHALLENGE_ACTIVE' || paused;
     const complete = result.status === 'SEQUENCE_COMPLETE';
     if (!active && !complete) {
       this.failChallenge(result.status === 'NO_MATCH' ? 'Identity mismatch' : 'Attempt ended');
@@ -95,7 +96,7 @@ export class WorkspaceUI {
     const completed = complete ? total : Math.max(0, Math.min(Number.isInteger(result.step) ? result.step : 0, total - 1));
     this.progress = { step: completed, total };
     this.#renderMeter(result);
-    this.$('challenge-panel').dataset.state = complete ? 'complete' : 'active';
+    this.$('challenge-panel').dataset.state = complete ? 'complete' : paused ? 'paused' : 'active';
     this.$('challenge-step').textContent = complete ? 'Sequence complete' : `Step ${completed + 1} of ${total}`;
     this.$('challenge-action').textContent = complete ? 'Sequence completed'
       : actionLabels[result.action] ?? 'Follow the current instruction';
@@ -103,7 +104,8 @@ export class WorkspaceUI {
     if (this.$('challenge-prompt').textContent !== prompt) this.$('challenge-prompt').textContent = prompt;
     this.$('challenge-timer').hidden = complete;
     if (complete) { this.#stopTimer(); return; }
-    this.deadlines = { step: result.stepExpiresAt, attempt: result.expiresAt };
+    // While paused there is no running step deadline, only the attempt deadline.
+    this.deadlines = { step: paused ? NaN : result.stepExpiresAt, attempt: result.expiresAt };
     this.#tick();
     if (this.interval === null) this.interval = this.setInterval(() => this.#tick(), 200);
   }

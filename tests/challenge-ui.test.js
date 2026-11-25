@@ -147,3 +147,27 @@ test('the next sample waits 300 ms after the previous answer, so the server neve
   await runChallenge({ video, accountId: 'alice', signal: new AbortController().signal, onUpdate() {} });
   for (let i = 1; i < sends.length; i++) assert.ok(sends[i] - answers[i - 1] >= 295, `gap ${sends[i] - answers[i - 1]} ms`);
 });
+
+test('after IDENTITY_RETRY sampling stops until the user retries, then resumes the same attempt', async t => {
+  const calls = []; let samples = 0; let release;
+  setup(t, async (url, options) => {
+    calls.push(url.replace('/api/liveness/challenges', ''));
+    if (url.endsWith('/resume')) return response({ ...challenge(), sampleToken: 'c'.repeat(64) });
+    if (!url.endsWith('/samples')) return response(challenge());
+    samples++;
+    if (samples === 1) return response({ ...challenge(), status: 'IDENTITY_RETRY', sampleToken: 'b'.repeat(64) });
+    assert.equal(JSON.parse(options.body).sampleToken, 'c'.repeat(64)); // token from resume
+    return response({ status: 'SEQUENCE_COMPLETE' });
+  });
+  const waiting = new Promise(resolve => { release = resolve; });
+  let asked = 0;
+  const run = runChallenge({ video, accountId: 'alice', signal: new AbortController().signal, onUpdate() {},
+    waitForRetry: () => { asked++; return waiting; } });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(asked, 1);
+  assert.equal(samples, 1); // nothing is sent while paused
+  release();
+  const result = await run;
+  assert.equal(result.status, 'SEQUENCE_COMPLETE');
+  assert.deepEqual(calls.slice(0, 4), ['', '/synthetic-id/samples', '/synthetic-id/resume', '/synthetic-id/samples']);
+});

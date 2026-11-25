@@ -16,7 +16,8 @@ export async function postJson(path, body, signal) {
   return result;
 }
 
-export async function runChallenge({ video, accountId, signal, onUpdate }) {
+// waitForRetry(signal): resolves when the user presses "Retry this step" after a first identity mismatch.
+export async function runChallenge({ video, accountId, signal, onUpdate, waitForRetry }) {
   let challengeId;
   try {
     const challenge = await postJson('/api/liveness/challenges', { accountId }, signal);
@@ -55,6 +56,14 @@ export async function runChallenge({ video, accountId, signal, onUpdate }) {
       signal.throwIfAborted();
       state = result;
       onUpdate(result);
+      if (result.status === 'IDENTITY_RETRY' && waitForRetry) {
+        await waitForRetry(signal); // sampling stays stopped while the server holds the attempt paused
+        state = await postJson(`/api/liveness/challenges/${challengeId}/resume`, { sampleToken: state.sampleToken }, signal);
+        signal.throwIfAborted();
+        onUpdate(state);
+        lastAnswer = Date.now();
+        continue;
+      }
       if (result.status !== 'CHALLENGE_ACTIVE') return result;
     }
   } finally {

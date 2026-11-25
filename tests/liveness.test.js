@@ -66,16 +66,16 @@ test('complete ordered sequence checks every sample but never grants authenticat
   const f = fixture();
   const created = f.create();
   const id = created.challengeId;
-  assert.equal(created.totalSteps, 4); // random() => 0: look_straight, turn_left, center, turn_left
+  assert.equal(created.totalSteps, 6); // random() => 0: look_straight, then turn_left / center alternating
   assert.equal(created.authenticated, false);
   let result;
-  for (const pose of [{}, { noseOffset: -0.3 }, {}, { noseOffset: -0.3 }]) {
+  for (const pose of [{}, { noseOffset: -0.3 }, {}, { noseOffset: -0.3 }, {}, { noseOffset: -0.3 }]) {
     const first = sample(f, id, pose);
     assert.equal(first.sequencePassed, false);
     result = sample(f, id, pose);
   }
   assert.equal(result.status, 'SEQUENCE_COMPLETE');
-  assert.equal(result.step, 4);
+  assert.equal(result.step, 6);
   assert.equal(result.distance, 0);
   assert.equal(result.sequencePassed, true);
   assert.equal(result.liveness, 'SERVER_MEASURED_CHALLENGE');
@@ -100,21 +100,56 @@ test('turn and return are measured relative to the initial neutral pose', () => 
   const f = fixture(); const { challengeId: id } = f.create();
   let result;
   // Baseline 0.08; -0.08 is only a turn (-0.16) relative to it, never in absolute terms.
-  for (const pose of [{ noseOffset: 0.08 }, { noseOffset: -0.08 }, { noseOffset: 0.08 }, { noseOffset: -0.08 }]) {
+  for (const pose of [0.08, -0.08, 0.08, -0.08, 0.08, -0.08].map(noseOffset => ({ noseOffset }))) {
     sample(f, id, pose); result = sample(f, id, pose);
   }
   assert.equal(result.status, 'SEQUENCE_COMPLETE');
 });
 
-test('wrong identity at a later step terminates the account-bound challenge', () => {
+const stranger = f => { const evidence = f.evidence(); evidence.descriptor.fill(1); f.advance(); return evidence; };
+
+test('a first identity mismatch pauses the attempt; samples while paused end it', () => {
   const f = fixture(); const { challengeId: id } = f.create();
   sample(f, id); sample(f, id);
-  const evidence = f.evidence({ tilt: -15 }); evidence.descriptor.fill(1); f.advance();
-  const result = f.send(id, evidence);
-  assert.equal(result.status, 'NO_MATCH');
+  const result = f.send(id, stranger(f));
+  assert.equal(result.status, 'IDENTITY_RETRY');
+  assert.equal(result.step, 1); // same step, nothing advanced
   assert.equal(result.authenticated, false);
   assert.equal(result.liveness, 'NOT_EVALUATED');
+  assert.throws(() => sample(f, id), /CHALLENGE_PAUSED/);
   assert.throws(() => sample(f, id), /CHALLENGE_NOT_FOUND/);
+});
+
+test('resume continues the same step once; a second mismatch in the attempt ends it', () => {
+  const f = fixture({ stepTimeoutMs: 1000, timeoutMs: 60000 });
+  const { challengeId: id } = f.create(); // look_straight, turn_left, center, turn_left
+  sample(f, id); sample(f, id);
+  sample(f, id, { noseOffset: -0.3 }); // one of two turn samples
+  const paused = f.send(id, stranger(f));
+  assert.equal(paused.status, 'IDENTITY_RETRY');
+  f.advance(5000); // well past the old step deadline while paused
+  assert.throws(() => f.challenges.resume(id, { sampleToken: 'a'.repeat(64) }), /INVALID_SAMPLE_TOKEN/);
+  const g = fixture({ stepTimeoutMs: 1000, timeoutMs: 60000 });
+  const { challengeId: other } = g.create();
+  sample(g, other); sample(g, other);
+  g.send(other, stranger(g));
+  g.advance(5000);
+  const resumed = g.challenges.resume(other, { sampleToken: g.token(other) });
+  assert.equal(resumed.status, 'CHALLENGE_ACTIVE');
+  assert.equal(resumed.step, 1);
+  assert.ok(resumed.stepExpiresAt > g.challenges.now()); // fresh step deadline
+  assert.throws(() => g.challenges.resume(other, { sampleToken: resumed.sampleToken }), /NOT_PAUSED/);
+  const h = fixture();
+  const { challengeId: third } = h.create();
+  sample(h, third); sample(h, third);
+  h.send(third, stranger(h));
+  const back = h.challenges.resume(third, { sampleToken: h.token(third) });
+  h.advance();
+  h.send(third, { ...h.evidence({ noseOffset: -0.3 }), sampleToken: back.sampleToken }); // token rotated on resume
+  assert.equal(sample(h, third, { noseOffset: -0.3 }).step, 2); // the hold restarts after resuming
+  const ended = h.send(third, stranger(h));
+  assert.equal(ended.status, 'NO_MATCH');
+  assert.throws(() => sample(h, third), /CHALLENGE_NOT_FOUND/);
 });
 
 test('invalid evidence, fake flags, account replacement and geometry consume the challenge', () => {
@@ -175,14 +210,15 @@ const poseFor = action => ({ tilt_left: { tilt: -15 }, tilt_right: { tilt: 15 },
   turn_left: { noseOffset: -0.3 }, turn_right: { noseOffset: 0.3 } })[action] ?? {};
 
 test('any pose can follow any other, with hidden random hold counts and no future actions exposed', () => {
-  // Script: 5 actions; poses picked from "all poses except the previous one"; holds of 2 or 3 samples.
-  const choices = [2, 3, 1, 2, 0, 2, 1, 1, 0, 0, 1];
+  // Script: 6 actions; poses picked from "all poses except the previous one"; holds of 2 or 3 samples.
+  const choices = [1, 3, 1, 2, 0, 2, 1, 1, 0, 0, 1, 1, 0];
   const maxima = [];
   const f = fixture({ random: max => { maxima.push(max); return choices.shift(); } });
   let result = f.create();
   const id = result.challengeId;
-  assert.deepEqual(maxima, [3, 4, 2, 4, 2, 4, 2, 4, 2, 4, 2]);
-  const expected = [['look_straight', 2], ['tilt_right', 3], ['turn_right', 2], ['tilt_left', 3], ['turn_left', 2], ['center', 3]];
+  assert.deepEqual(maxima, [2, 4, 2, 4, 2, 4, 2, 4, 2, 4, 2, 4, 2]);
+  const expected = [['look_straight', 2], ['tilt_right', 3], ['turn_right', 2], ['tilt_left', 3], ['turn_left', 2],
+    ['center', 3], ['turn_right', 2]];
   assert.equal(result.totalSteps, expected.length);
   for (const [step, [action, hold]] of expected.entries()) {
     assert.equal(result.action, action);
@@ -197,14 +233,14 @@ test('any pose can follow any other, with hidden random hold counts and no futur
   assert.throws(() => fixture({ random: () => 3 }).create(), /Invalid liveness random source/);
 });
 
-test('real randomness yields varied plans of 4-6 steps without repeated consecutive poses', () => {
+test('real randomness yields varied plans of 6-7 steps without repeated consecutive poses', () => {
   const f = fixture({ maxChallenges: 1000, random: randomInt });
   const plans = new Set();
   for (let n = 0; n < 300; n++) {
     let result = f.create();
     const id = result.challengeId;
     const actions = [];
-    assert.ok(result.totalSteps >= 4 && result.totalSteps <= 6);
+    assert.ok(result.totalSteps >= 6 && result.totalSteps <= 7);
     while (result.status === 'CHALLENGE_ACTIVE') {
       if (actions.at(-1) !== result.action) actions.push(result.action);
       result = sample(f, id, poseFor(result.action));
@@ -272,6 +308,22 @@ test('each sample reports the requirements of the evaluated action, and they mat
   assert.ok(result.checks.every(c => c.pass));
   const mismatch = f.evidence(); mismatch.descriptor.fill(1); f.advance();
   result = f.send(id, mismatch);
-  assert.equal(result.status, 'NO_MATCH');
+  assert.equal(result.status, 'IDENTITY_RETRY');
   assert.deepEqual(result.checks.map(c => [c.label, c.pass]), [['Identity distance', false]]);
+});
+
+test('a paused attempt survives clean-up past its old step deadline until the overall deadline', () => {
+  const f = fixture({ stepTimeoutMs: 1000, timeoutMs: 10000 });
+  const { challengeId: id } = f.create();
+  sample(f, id); sample(f, id);
+  f.send(id, stranger(f));
+  f.advance(3000);
+  f.create(); // runs clean-up of expired challenges
+  assert.equal(f.challenges.resume(id, { sampleToken: f.token(id) }).status, 'CHALLENGE_ACTIVE');
+  const late = f.create().challengeId;
+  sample(f, late); sample(f, late);
+  f.send(late, stranger(f));
+  f.advance(10000);
+  f.create();
+  assert.throws(() => f.challenges.resume(late, { sampleToken: f.token(late) }), /CHALLENGE_NOT_FOUND/);
 });

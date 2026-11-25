@@ -153,11 +153,11 @@ If port 3000 is already in use, open the running app if it is yours, or run
 `$env:PORT = '3001'; npm start` in PowerShell and open [localhost:3001](http://localhost:3001).
 
 Every challenge starts with a neutral pose (eyes open); its nose offset and eye-line angle become
-the user's own baseline. The server then draws 3–5 further actions from five poses
+the user's own baseline. The server then draws 5–6 further actions from five poses (6–7 steps in total)
 (center, turn left/right, tilt left/right). Each action may be any pose except the previous one,
 so there is no fixed "act, then return" rhythm (a turn can go straight into a tilt). Each action
 must be held for a random 2 or 3 consecutive samples, which the server never reveals.
-That gives 4³ + 4⁴ + 4⁵ = 1,344 action sequences (before hold timing), against 8 in Day 4's
+That gives 4⁵ + 4⁶ = 5,120 action sequences (before hold timing), against 8 in Day 4's
 first version. Follow each displayed prompt rather than memorizing a previous attempt.
 
 Every sample response also carries `checks`: the requirements of the action just evaluated, each as
@@ -166,11 +166,17 @@ only when all of them pass for the hidden number of consecutive samples. The wor
 `value / op target`, with the value green when met and red when not, which also gives
 per-sample evidence for the report.
 
+Identity retry: the first identity mismatch in an attempt (often caused by a strong head pose) pauses
+the attempt instead of ending it. The response is `IDENTITY_RETRY`; the page stops sampling and shows
+"Retry this step". `POST /api/liveness/challenges/:id/resume` with the current `sampleToken` reopens the
+same step (hold count reset) with a fresh step deadline, still capped by the attempt deadline. Samples
+sent while paused end the attempt; a second mismatch ends it and counts towards the account lockout.
+
 Speed (Day 5): the server runs the tiny detector first and SSD MobileNet only when it finds no face
 (about 150 ms instead of 450 ms per frontal frame on the development laptop); challenge frames are
 downscaled to 480 px and skip the browser-side detector; the next sample is sent as soon as the
 previous answer arrives plus 300 ms (the server needs at least 150 ms between analysed samples). Each response reports `serverMs`, the browser adds the
-round trip, and both appear next to the requirements. Limits are now 20 s per step and 60 s per attempt. The preview is mirrored (CSS only; frames sent to the server are not),
+round trip, and both appear next to the requirements. Limits are now 20 s per step and 90 s per attempt. The preview is mirrored (CSS only; frames sent to the server are not),
 and prompts use the user's own left/right. Action names keep raw-image coordinates:
 `turn_left` (nose toward image left) is shown as "Turn to your right".
 
@@ -251,7 +257,7 @@ real biometric captures, and model weights; tests use synthetic inputs.
 Descriptors and landmarks are now measured by the server from submitted frames, so a
 modified client can no longer send made-up numbers. It can still send frames that do not
 come from a real camera (a virtual camera or a recorded video): token binding rejects
-unchanged old requests but does **not** establish fresh or genuine camera input. With 1,344 sequences and hidden hold counts a
+unchanged old requests but does **not** establish fresh or genuine camera input. With 5,120 sequences and hidden hold counts a
 prerecorded clip is unlikely to match, but an attacker who records many poses and switches
 clips live (or a real-time deepfake) can still follow the prompts. Moving or tilting
 a display can also affect pose estimates. Physical trials are required.

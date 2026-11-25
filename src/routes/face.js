@@ -73,6 +73,8 @@ export function faceRoutes(engine, { analyzer, sessions, limiter, ...options } =
     res.json(result);
   });
 
+  router.post('/liveness/challenges/:id/resume', (req, res) => res.json(challenges.resume(req.params.id, req.body)));
+
   router.delete('/liveness/challenges/:id', (req, res) => {
     challenges.cancel(req.params.id);
     res.status(204).end();

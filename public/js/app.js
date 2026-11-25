@@ -26,6 +26,8 @@ const messages = {
   TEMPLATE_CREATED: 'Template created and stored encrypted on the server. Now start the login challenge.',
   MATCH: 'Identity match only (baseline). Liveness was not checked and no session was issued.',
   FACE_TOO_SMALL: 'Move closer to the camera.',
+  IDENTITY_RETRY: 'Identity uncertain. Face the screen directly, adjust your position, then press "Retry this step". One retry per attempt.',
+  CHALLENGE_PAUSED: 'This attempt is paused. Start a new challenge.',
   FACE_LOST: 'Face lost. Turn a little less and keep your face in the frame; the step continues.',
   INCONSISTENT_FRAMES: 'Enrollment frames did not show the same person. Hold still and retry.',
   INVALID_FRAME: 'The server could not read the captured frame.',
@@ -154,6 +156,17 @@ for (const [id, endpoint] of [['enroll', 'templates'], ['verify', 'verify']]) {
     } finally { if (current === operation) { busy = false; request = undefined; buttons(); } }
   });
 }
+// Shows "Retry this step" until pressed; stopping the camera or cancelling hides it and aborts.
+function waitForRetry(signal) {
+  return new Promise((resolve, reject) => {
+    const button = $('retry');
+    const done = () => { button.hidden = true; button.onclick = null; signal.removeEventListener('abort', aborted); };
+    const aborted = () => { done(); reject(signal.reason); };
+    button.hidden = false;
+    button.onclick = () => { done(); resolve(); };
+    signal.addEventListener('abort', aborted, { once: true });
+  });
+}
 $('challenge').addEventListener('click', async () => {
   if (busy || !ready || !camera.active || !$('consent').checked) return;
   clearResults();
@@ -163,7 +176,7 @@ $('challenge').addEventListener('click', async () => {
   request = new AbortController();
   busy = true; buttons(); status('PROCESSING');
   try {
-    const final = await runChallenge({ video: $('video'), accountId, signal: request.signal, onUpdate(result) {
+    const final = await runChallenge({ video: $('video'), accountId, signal: request.signal, waitForRetry, onUpdate(result) {
       if (current !== operation) return;
       status(result.faceLost ? 'FACE_LOST' : result.status);
       workspace.updateChallenge(result);

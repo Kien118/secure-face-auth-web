@@ -43,7 +43,7 @@ async function fixture(t, options = {}) {
   async function login(accountId = 'alice', value = 0) {
     const created = await (await call('liveness/challenges', { accountId })).json();
     let token = created.sampleToken; let response;
-    for (const pose of [{}, { turned: true }, {}, { turned: true }]) { // plan for random() => 0
+    for (const pose of [{}, { turned: true }, {}, { turned: true }, {}, { turned: true }]) { // plan for random() => 0
       for (let i = 0; i < 2; i++) {
         time += 200;
         response = await call(`liveness/challenges/${created.challengeId}/samples`, { frame: frame(value, pose), sampleToken: token });
@@ -60,7 +60,11 @@ test('repeated identity mismatches lock the account and block new challenges', a
   await f.enroll('alice', 0);
   for (let i = 0; i < 3; i++) {
     const { challengeId, sampleToken } = await (await f.call('liveness/challenges', { accountId: 'alice' })).json();
-    const result = await (await f.call(`liveness/challenges/${challengeId}/samples`, { frame: frame(1), sampleToken })).json();
+    const paused = await (await f.call(`liveness/challenges/${challengeId}/samples`, { frame: frame(1), sampleToken })).json();
+    assert.equal(paused.status, 'IDENTITY_RETRY'); // the one retry does not count as a failure
+    const resumed = await (await f.call(`liveness/challenges/${challengeId}/resume`, { sampleToken: paused.sampleToken })).json();
+    f.advance(200);
+    const result = await (await f.call(`liveness/challenges/${challengeId}/samples`, { frame: frame(1), sampleToken: resumed.sampleToken })).json();
     assert.equal(result.status, 'NO_MATCH');
   }
   const locked = await f.call('liveness/challenges', { accountId: 'alice' });

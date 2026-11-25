@@ -15,11 +15,13 @@ const prompts = {
 };
 // Target pose per action as [yaw, roll]: -1/1 = required direction, 0 = neutral.
 const POSES = { center: [0, 0], turn_left: [-1, 0], turn_right: [1, 0], tilt_left: [0, -1], tilt_right: [0, 1] };
-const MIN_STEPS = 3; // random 3..5 actions after look_straight
-const STEP_CHOICES = 3;
+const MIN_STEPS = 5; // random 5..6 actions after look_straight: 6-7 steps in total
+const STEP_CHOICES = 2;
 const MIN_HOLD = 2; // random 2..3 consecutive samples per action, never sent to the client
 const HOLD_CHOICES = 2;
 const sampleToken = () => randomBytes(32).toString('hex');
+const tokenMatches = (challenge, token) => typeof token === 'string' && /^[a-f0-9]{64}$/.test(token) &&
+  timingSafeEqual(Buffer.from(token, 'hex'), Buffer.from(challenge.sampleToken, 'hex'));
 const OPS = { '≥': (a, b) => a >= b, '≤': (a, b) => a <= b, '<': (a, b) => a < b };
 // One requirement of the evaluated action: shown to the user as "value / op target", pass or fail.
 const check = (label, value, op, target) => ({ label, value, op, target, pass: OPS[op](value, target) });
@@ -54,7 +56,7 @@ export function measureLandmarks(points) {
 
 export class LivenessChallenges {
   #challenges = new Map();
-  constructor(engine, { now = Date.now, random = randomInt, timeoutMs = 60000, stepTimeoutMs = 20000, maxChallenges = 100,
+  constructor(engine, { now = Date.now, random = randomInt, timeoutMs = 90000, stepTimeoutMs = 20000, maxChallenges = 100,
     eyeOpen = 0.25, headTurn = 0.15, headCenter = 0.10, headTiltDeg = 12, headLevelDeg = 6, limiter = null } = {}) {
     if (typeof now !== 'function' || typeof random !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs <= 0 ||
         !Number.isInteger(stepTimeoutMs) || stepTimeoutMs <= 0 ||
@@ -86,7 +88,8 @@ export class LivenessChallenges {
     if (this.limiter?.locked(accountId)) throw new InputError('LOCKED', 429);
     const now = this.now();
     for (const [id, challenge] of this.#challenges) {
-      if (now >= challenge.stepExpiresAt) this.#challenges.delete(id);
+      // A paused attempt has no running step deadline; only its overall deadline applies.
+      if (now >= (challenge.paused ? challenge.expiresAt : challenge.stepExpiresAt)) this.#challenges.delete(id);
     }
     if (this.#challenges.size >= this.maxChallenges) throw new InputError('CHALLENGE_CAPACITY', 503);
     const pick = max => {
@@ -106,7 +109,7 @@ export class LivenessChallenges {
     }
     const challengeId = randomUUID();
     const challenge = { accountId, step: 0, consecutive: 0, lastSampleAt: null, neutralOffset: 0, neutralOffsetSum: 0,
-      neutralRoll: 0, neutralRollSum: 0,
+      neutralRoll: 0, neutralRollSum: 0, retryUsed: false, paused: false,
       plan, holds, sampleToken: sampleToken(), expiresAt: now + this.timeoutMs,
       stepExpiresAt: now + Math.min(this.timeoutMs, this.stepTimeoutMs) };
     this.#challenges.set(challengeId, challenge);
@@ -130,12 +133,10 @@ export class LivenessChallenges {
     try {
       const now = this.now();
       if (now >= challenge.expiresAt) throw new InputError('CHALLENGE_EXPIRED', 410);
+      if (challenge.paused) throw new InputError('CHALLENGE_PAUSED', 409); // samples only after resume()
       if (now >= challenge.stepExpiresAt) throw new InputError('STEP_EXPIRED', 410);
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new InputError('INVALID_PAYLOAD');
-      if (typeof body.sampleToken !== 'string' || !/^[a-f0-9]{64}$/.test(body.sampleToken) ||
-          !timingSafeEqual(Buffer.from(body.sampleToken, 'hex'), Buffer.from(challenge.sampleToken, 'hex'))) {
-        throw new InputError('INVALID_SAMPLE_TOKEN');
-      }
+      if (!tokenMatches(challenge, body.sampleToken)) throw new InputError('INVALID_SAMPLE_TOKEN');
       if (Object.keys(body).sort().join(',') !== 'descriptor,landmarks,sampleToken') throw new InputError('INVALID_PAYLOAD');
       if (challenge.lastSampleAt !== null && now - challenge.lastSampleAt < 150) {
         throw new InputError('SAMPLE_TOO_FAST');
@@ -143,6 +144,14 @@ export class LivenessChallenges {
       const identity = this.engine.verify({ accountId: challenge.accountId, descriptor: body.descriptor });
       const metrics = measureLandmarks(body.landmarks);
       const identityCheck = check('Identity distance', identity.distance, '≤', identity.threshold);
+      if (!identity.matched && !challenge.retryUsed) {
+        // First mismatch in this attempt (often a strong head pose): pause instead of failing. The user
+        // resumes the same step once; a second mismatch ends the attempt and counts as a failure.
+        Object.assign(challenge, { retryUsed: true, paused: true, consecutive: 0, lastSampleAt: now,
+          neutralOffsetSum: 0, neutralRollSum: 0, sampleToken: sampleToken() });
+        return { ...this.#response(challenge), ...identity, status: 'IDENTITY_RETRY', retryAvailable: true,
+          liveness: 'NOT_EVALUATED', authenticated: false, checksFor: challenge.plan[challenge.step], checks: [identityCheck] };
+      }
       if (!identity.matched) {
         this.#challenges.delete(id);
         this.limiter?.fail(challenge.accountId);
@@ -194,6 +203,27 @@ export class LivenessChallenges {
       else challenge.sampleToken = sampleToken();
       return { ...this.#response(challenge), checksFor: action, checks, ear: metrics.ear, noseOffset: metrics.noseOffset, tilt,
         distance: identity.distance, threshold: identity.threshold };
+    } catch (error) {
+      this.#challenges.delete(id);
+      this.limiter?.fail(challenge.accountId);
+      throw error;
+    }
+  }
+  // Resumes a paused attempt at the same step with a fresh step deadline (still capped by the overall one).
+  resume(id, body) {
+    const challenge = this.#challenges.get(id);
+    if (!challenge) throw new InputError('CHALLENGE_NOT_FOUND', 404);
+    try {
+      const now = this.now();
+      if (now >= challenge.expiresAt) throw new InputError('CHALLENGE_EXPIRED', 410);
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).join(',') !== 'sampleToken') {
+        throw new InputError('INVALID_PAYLOAD');
+      }
+      if (!tokenMatches(challenge, body.sampleToken)) throw new InputError('INVALID_SAMPLE_TOKEN');
+      if (!challenge.paused) throw new InputError('NOT_PAUSED', 409);
+      Object.assign(challenge, { paused: false, sampleToken: sampleToken(),
+        stepExpiresAt: Math.min(now + this.stepTimeoutMs, challenge.expiresAt) });
+      return this.#response(challenge);
     } catch (error) {
       this.#challenges.delete(id);
       this.limiter?.fail(challenge.accountId);

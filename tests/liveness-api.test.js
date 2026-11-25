@@ -61,7 +61,12 @@ async function fixture(t, options = {}, { limiter = new AttemptLimiter({ maxFail
     }
     return response;
   };
-  return { base, post, enroll, create, sample, advance: ms => { time += ms; },
+  const resume = async challengeId => {
+    const response = await post(`liveness/challenges/${challengeId}/resume`, { sampleToken: tokens.get(challengeId) });
+    if (response.ok) tokens.set(challengeId, (await response.clone().json()).sampleToken);
+    return response;
+  };
+  return { base, post, enroll, create, sample, resume, advance: ms => { time += ms; },
     cancel: id => fetch(`${base}/liveness/challenges/${id}`, { method: 'DELETE' }) };
 }
 
@@ -89,8 +94,8 @@ test('ordered server-measured evidence completes the sequence, consumes the chal
   const f = await fixture(t);
   await f.enroll();
   const { challengeId } = await f.create();
-  // random() => 0 yields look_straight, turn_left, center, turn_left, each held for 2 samples.
-  const steps = [{}, { turned: true }, {}, { turned: true }];
+  // random() => 0 yields look_straight, then turn_left / center alternating (6 steps), each held for 2 samples.
+  const steps = [{}, { turned: true }, {}, { turned: true }, {}, { turned: true }];
   let result;
   let cookie;
   for (const [index, pose] of steps.entries()) {
@@ -178,6 +183,10 @@ test('sample identity is checked against the server-bound account on every frame
   await f.enroll('bob', 1);
   const { challengeId } = await f.create('alice');
   assert.equal((await f.sample(challengeId)).status, 200);
+  const first = await f.sample(challengeId, { descriptor: descriptor(1), landmarks: landmarks() });
+  assert.equal((await first.json()).status, 'IDENTITY_RETRY');
+  assert.equal(first.headers.get('set-cookie'), null);
+  assert.equal((await f.resume(challengeId)).status, 200);
   const response = await f.sample(challengeId, { descriptor: descriptor(1), landmarks: landmarks() });
   assert.equal(response.status, 200);
   const result = await response.json();

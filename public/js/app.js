@@ -21,7 +21,7 @@ const messages = {
   NO_FACE: 'No face detected.', MULTIPLE_FACES: 'Multiple faces detected. Exactly one face is required.',
   MODEL_ERROR: 'Model loading or inference failed. Run npm run models:download and retry.',
   SERVER_ERROR: 'Server connection or response error.',
-  NO_TEMPLATE: 'This account has no template. Create a test template first.',
+  NO_TEMPLATE: 'No face is enrolled for this account (never enrolled, or deleted). Click "Enroll face" first.',
   TEMPLATE_EXISTS: 'This account already has a template. Log in and delete it to enroll again.',
   TEMPLATE_CREATED: 'Template created and stored encrypted on the server. Now start the login challenge.',
   MATCH: 'Identity match only (baseline). Liveness was not checked and no session was issued.',

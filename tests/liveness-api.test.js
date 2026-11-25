@@ -89,7 +89,8 @@ test('ordered server-measured evidence completes the sequence, consumes the chal
   const f = await fixture(t);
   await f.enroll();
   const { challengeId } = await f.create();
-  const steps = [{}, { tilted: true }, {}, { turned: true }, {}];
+  // random() => 0 yields look_straight, turn_left, center, turn_left, each held for 2 samples.
+  const steps = [{}, { turned: true }, {}, { turned: true }];
   let result;
   let cookie;
   for (const [index, pose] of steps.entries()) {

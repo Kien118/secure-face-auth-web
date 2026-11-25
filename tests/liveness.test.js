@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { randomInt } from 'node:crypto';
 import { FaceEngine } from '../src/services/face-engine.js';
 import { LivenessChallenges, measureLandmarks } from '../src/services/liveness.js';
 
@@ -65,16 +66,16 @@ test('complete ordered sequence checks every sample but never grants authenticat
   const f = fixture();
   const created = f.create();
   const id = created.challengeId;
-  assert.equal(created.totalSteps, 5);
+  assert.equal(created.totalSteps, 4); // random() => 0: look_straight, turn_left, center, turn_left
   assert.equal(created.authenticated, false);
   let result;
-  for (const pose of [{}, { tilt: -15 }, {}, { noseOffset: -0.3 }, {}]) {
+  for (const pose of [{}, { noseOffset: -0.3 }, {}, { noseOffset: -0.3 }]) {
     const first = sample(f, id, pose);
     assert.equal(first.sequencePassed, false);
     result = sample(f, id, pose);
   }
   assert.equal(result.status, 'SEQUENCE_COMPLETE');
-  assert.equal(result.step, 5);
+  assert.equal(result.step, 4);
   assert.equal(result.distance, 0);
   assert.equal(result.sequencePassed, true);
   assert.equal(result.liveness, 'SERVER_MEASURED_CHALLENGE');
@@ -82,23 +83,24 @@ test('complete ordered sequence checks every sample but never grants authenticat
   assert.throws(() => sample(f, id), /CHALLENGE_NOT_FOUND/);
 });
 
-test('static poses and out-of-order actions cannot complete the sequence', () => {
+test('static poses, wrong poses and interrupted holds cannot complete the sequence', () => {
   const f = fixture(); const { challengeId: id } = f.create();
+  // An unstable baseline (tilted, then level) restarts look_straight.
   assert.equal(sample(f, id, { tilt: -15 }).step, 0);
   sample(f, id); assert.equal(sample(f, id, { tilt: -15 }).step, 0);
-  sample(f, id); assert.equal(sample(f, id).step, 1);
-  for (let i = 0; i < 8; i++) assert.equal(sample(f, id).step, 1);
-  assert.equal(sample(f, id, { noseOffset: -0.3 }).step, 1);
-  sample(f, id, { tilt: -15 }); sample(f, id);
-  assert.equal(sample(f, id, { tilt: -15 }).step, 1);
-  assert.equal(sample(f, id, { tilt: -15 }).step, 2);
+  sample(f, id); assert.equal(sample(f, id).step, 1); // now turn_left
+  for (let i = 0; i < 8; i++) assert.equal(sample(f, id).step, 1); // staying still never advances
+  sample(f, id, { tilt: -15 }); assert.equal(sample(f, id, { tilt: -15 }).step, 1); // wrong pose
+  sample(f, id, { noseOffset: -0.3 }); assert.equal(sample(f, id).step, 1); // interrupted hold resets
+  sample(f, id, { noseOffset: -0.3 }); assert.equal(sample(f, id, { noseOffset: -0.3 }).step, 2); // now center
+  sample(f, id, { tilt: -15 }); assert.equal(sample(f, id, { tilt: -15 }).step, 2); // tilted is not center
 });
 
 test('turn and return are measured relative to the initial neutral pose', () => {
   const f = fixture(); const { challengeId: id } = f.create();
   let result;
-  for (const pose of [{ noseOffset: 0.08 }, { tilt: -15, noseOffset: 0.08 },
-    { noseOffset: 0.08 }, { noseOffset: -0.17 }, { noseOffset: 0.08 }]) {
+  // Baseline 0.08; -0.08 is only a turn (-0.16) relative to it, never in absolute terms.
+  for (const pose of [{ noseOffset: 0.08 }, { noseOffset: -0.08 }, { noseOffset: 0.08 }, { noseOffset: -0.08 }]) {
     sample(f, id, pose); result = sample(f, id, pose);
   }
   assert.equal(result.status, 'SEQUENCE_COMPLETE');
@@ -169,31 +171,48 @@ test('liveness configuration rejects non-finite and inverted thresholds', () => 
   }
 });
 
-test('server randomizes both action order and turn direction without exposing future actions', () => {
-  for (const order of [0, 1]) for (const direction of [0, 1]) for (const tiltDirection of [0, 1]) {
-    const choices = [order, direction, tiltDirection];
-    const f = fixture({ random: max => { assert.equal(max, 2); return choices.shift(); } });
+const poseFor = action => ({ tilt_left: { tilt: -15 }, tilt_right: { tilt: 15 },
+  turn_left: { noseOffset: -0.3 }, turn_right: { noseOffset: 0.3 } })[action] ?? {};
+
+test('any pose can follow any other, with hidden random hold counts and no future actions exposed', () => {
+  // Script: 5 actions; poses picked from "all poses except the previous one"; holds of 2 or 3 samples.
+  const choices = [2, 3, 1, 2, 0, 2, 1, 1, 0, 0, 1];
+  const maxima = [];
+  const f = fixture({ random: max => { maxima.push(max); return choices.shift(); } });
+  let result = f.create();
+  const id = result.challengeId;
+  assert.deepEqual(maxima, [3, 4, 2, 4, 2, 4, 2, 4, 2, 4, 2]);
+  const expected = [['look_straight', 2], ['tilt_right', 3], ['turn_right', 2], ['tilt_left', 3], ['turn_left', 2], ['center', 3]];
+  assert.equal(result.totalSteps, expected.length);
+  for (const [step, [action, hold]] of expected.entries()) {
+    assert.equal(result.action, action);
+    for (const hidden of ['plan', 'steps', 'holds', 'hold']) assert.equal(result[hidden], undefined);
+    for (let i = 1; i < hold; i++) assert.equal(sample(f, id, poseFor(action)).step, step, `${action} needs ${hold} samples`);
+    result = sample(f, id, poseFor(action));
+  }
+  assert.equal(result.status, 'SEQUENCE_COMPLETE');
+  assert.equal(result.action, null);
+  assert.equal(result.sampleToken, undefined);
+  assert.equal(result.authenticated, false);
+  assert.throws(() => fixture({ random: () => 3 }).create(), /Invalid liveness random source/);
+});
+
+test('real randomness yields varied plans of 4-6 steps without repeated consecutive poses', () => {
+  const f = fixture({ maxChallenges: 1000, random: randomInt });
+  const plans = new Set();
+  for (let n = 0; n < 300; n++) {
     let result = f.create();
     const id = result.challengeId;
-    const blink = [tiltDirection === 0 ? 'tilt_left' : 'tilt_right', 'level_head'];
-    const turn = [direction === 0 ? 'turn_left' : 'turn_right', 'return_center'];
-    const expected = ['look_straight', ...(order === 0 ? [...blink, ...turn] : [...turn, ...blink])];
-    for (const action of expected) {
-      assert.equal(result.action, action);
-      assert.equal(result.plan, undefined);
-      assert.equal(result.steps, undefined);
-      const pose = action === 'tilt_left' ? { tilt: -15 } : action === 'tilt_right' ? { tilt: 15 }
-        : action === 'turn_left' ? { noseOffset: -0.3 }
-          : action === 'turn_right' ? { noseOffset: 0.3 } : {};
-      sample(f, id, pose); result = sample(f, id, pose);
+    const actions = [];
+    assert.ok(result.totalSteps >= 4 && result.totalSteps <= 6);
+    while (result.status === 'CHALLENGE_ACTIVE') {
+      if (actions.at(-1) !== result.action) actions.push(result.action);
+      result = sample(f, id, poseFor(result.action));
     }
-    assert.equal(result.status, 'SEQUENCE_COMPLETE');
-    assert.equal(result.action, null);
-    assert.equal(result.sampleToken, undefined);
-    assert.equal(result.authenticated, false);
+    assert.equal(actions.length, result.step); // each step differs from the previous one
+    plans.add(actions.join('>'));
   }
-  const f = fixture({ random: () => 2 });
-  assert.throws(() => f.create(), /Invalid liveness random source/);
+  assert.ok(plans.size > 150, `only ${plans.size} distinct plans in 300 attempts`);
 });
 
 test('each accepted sample rotates its token, including a pose which does not advance', () => {

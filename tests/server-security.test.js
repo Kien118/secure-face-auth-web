@@ -43,7 +43,7 @@ async function fixture(t, options = {}) {
   async function login(accountId = 'alice', value = 0) {
     const created = await (await call('liveness/challenges', { accountId })).json();
     let token = created.sampleToken; let response;
-    for (const pose of [{}, { tilted: true }, {}, { turned: true }, {}]) {
+    for (const pose of [{}, { turned: true }, {}, { turned: true }]) { // plan for random() => 0
       for (let i = 0; i < 2; i++) {
         time += 200;
         response = await call(`liveness/challenges/${created.challengeId}/samples`, { frame: frame(value, pose), sampleToken: token });

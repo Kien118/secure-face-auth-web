@@ -1,7 +1,7 @@
 const actionLabels = {
   look_straight: 'Look straight ahead', tilt_left: 'Tilt to your right shoulder',
-  tilt_right: 'Tilt to your left shoulder', level_head: 'Straighten your head', turn_left: 'Turn to your right',
-  turn_right: 'Turn to your left', return_center: 'Return to center'
+  tilt_right: 'Tilt to your left shoulder', center: 'Look straight, head upright', turn_left: 'Turn to your right',
+  turn_right: 'Turn to your left'
 };
 const statusLabels = {
   TEMPLATE_CREATED: ['success', 'Template created'], MATCH: ['success', 'Identity match'],

@@ -80,14 +80,14 @@ test('completion and reset clear timers; identity failure retains the known step
   assert.equal(f.stops(), 1);
   assert.equal(f.nodes['challenge-progress'].value, 5);
   assert.equal(f.nodes['challenge-timer'].hidden, true);
-  f.ui.updateChallenge(active({ step: 2, action: 'level_head', prompt: 'Straighten your head.' }));
+  f.ui.updateChallenge(active({ step: 2, action: 'center', prompt: 'Look straight ahead.' }));
   f.ui.updateChallenge({ status: 'NO_MATCH' });
   assert.equal(f.stops(), 2);
   assert.equal(f.nodes['challenge-panel'].dataset.state, 'failed');
   assert.equal(f.nodes['challenge-progress'].value, 2);
   assert.equal(f.nodes['challenge-step'].textContent, 'Identity mismatch · Step 3 of 5');
-  assert.equal(f.nodes['challenge-action'].textContent, 'Straighten your head');
-  assert.equal(f.nodes['challenge-prompt'].textContent, 'Straighten your head.');
+  assert.equal(f.nodes['challenge-action'].textContent, 'Look straight, head upright');
+  assert.equal(f.nodes['challenge-prompt'].textContent, 'Look straight ahead.');
   f.ui.updateChallenge(active({ action: 'future_action' }));
   assert.equal(f.nodes['challenge-action'].textContent, 'Follow the current instruction');
   f.ui.resetChallenge({ label: 'Cancelled' });

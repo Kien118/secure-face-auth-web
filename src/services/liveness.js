@@ -7,13 +7,18 @@ const prompts = {
   // the head toward image left, which is the user's own right shoulder.
   tilt_left: 'Keep looking at the screen. Tilt your head toward your right shoulder.',
   tilt_right: 'Keep looking at the screen. Tilt your head toward your left shoulder.',
-  level_head: 'Straighten your head and look straight ahead.',
   // turn_left/turn_right name the nose direction in the raw (unmirrored) camera image, which is
   // opposite to the user's own side: turning to your right moves the nose toward image left.
   turn_left: 'Keep your eyes open. Turn your head slightly to your right.',
   turn_right: 'Keep your eyes open. Turn your head slightly to your left.',
-  return_center: 'Keep your eyes open and return your head to the center.'
+  center: 'Look straight ahead with your head upright.'
 };
+// Target pose per action as [yaw, roll]: -1/1 = required direction, 0 = neutral.
+const POSES = { center: [0, 0], turn_left: [-1, 0], turn_right: [1, 0], tilt_left: [0, -1], tilt_right: [0, 1] };
+const MIN_STEPS = 3; // random 3..5 actions after look_straight
+const STEP_CHOICES = 3;
+const MIN_HOLD = 2; // random 2..3 consecutive samples per action, never sent to the client
+const HOLD_CHOICES = 2;
 const sampleToken = () => randomBytes(32).toString('hex');
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
@@ -81,18 +86,25 @@ export class LivenessChallenges {
       if (now >= challenge.stepExpiresAt) this.#challenges.delete(id);
     }
     if (this.#challenges.size >= this.maxChallenges) throw new InputError('CHALLENGE_CAPACITY', 503);
-    const order = this.random(2);
-    const direction = this.random(2);
-    const tiltDirection = this.random(2);
-    if (![order, direction, tiltDirection].every(value => value === 0 || value === 1)) throw new Error('Invalid liveness random source');
-    // Tilt block: eyes stay open (prompts stay readable), measured from the eye line, presentable in a live demo.
-    const tilt = [tiltDirection === 0 ? 'tilt_left' : 'tilt_right', 'level_head'];
-    const turn = [direction === 0 ? 'turn_left' : 'turn_right', 'return_center'];
-    const plan = ['look_straight', ...(order === 0 ? [...tilt, ...turn] : [...turn, ...tilt])];
+    const pick = max => {
+      const value = this.random(max);
+      if (!Number.isInteger(value) || value < 0 || value >= max) throw new Error('Invalid liveness random source');
+      return value;
+    };
+    // Any pose may follow any other (no fixed "act then return" rhythm), with random length and hold
+    // counts, so a video recorded from earlier attempts is unlikely to match a new plan or its timing.
+    const plan = ['look_straight'];
+    const holds = [2];
+    for (let steps = MIN_STEPS + pick(STEP_CHOICES); steps > 0; steps--) {
+      const previous = plan.at(-1) === 'look_straight' ? 'center' : plan.at(-1);
+      const options = Object.keys(POSES).filter(pose => pose !== previous);
+      plan.push(options[pick(options.length)]);
+      holds.push(MIN_HOLD + pick(HOLD_CHOICES));
+    }
     const challengeId = randomUUID();
     const challenge = { accountId, step: 0, consecutive: 0, lastSampleAt: null, neutralOffset: 0, neutralOffsetSum: 0,
       neutralRoll: 0, neutralRollSum: 0,
-      plan, sampleToken: sampleToken(), expiresAt: now + this.timeoutMs,
+      plan, holds, sampleToken: sampleToken(), expiresAt: now + this.timeoutMs,
       stepExpiresAt: now + Math.min(this.timeoutMs, this.stepTimeoutMs) };
     this.#challenges.set(challengeId, challenge);
     return { challengeId, ...this.#response(challenge) };
@@ -138,12 +150,14 @@ export class LivenessChallenges {
       const action = challenge.plan[challenge.step];
       // Tilt is measured against this person's own neutral head roll from step 0.
       const tilt = metrics.roll - challenge.neutralRoll;
-      const followsStep = action === 'tilt_left' ? eyesOpen && tilt <= -this.headTiltDeg
-        : action === 'tilt_right' ? eyesOpen && tilt >= this.headTiltDeg
-        : action === 'level_head' ? centered && eyesOpen && Math.abs(tilt) <= this.headLevelDeg
-        : action === 'turn_left' ? eyesOpen && offset <= -this.headTurn
-          : action === 'turn_right' ? eyesOpen && offset >= this.headTurn
-            : centered && eyesOpen; // neutral pose: look_straight, return_center
+      const [yaw, roll] = POSES[action] ?? POSES.center;
+      // A neutral axis must be strictly neutral only in the full center pose; while turning or tilting,
+      // the other axis just must not be in a required pose itself.
+      const yawOk = yaw ? yaw * offset >= this.headTurn : roll ? Math.abs(offset) < this.headTurn : centered;
+      const rollOk = action === 'look_straight' ? true // the baseline roll is being measured in this step
+        : roll ? roll * tilt >= this.headTiltDeg
+          : yaw ? Math.abs(tilt) < this.headTiltDeg : Math.abs(tilt) <= this.headLevelDeg;
+      const followsStep = eyesOpen && yawOk && rollOk;
       challenge.lastSampleAt = now;
       // The neutral baseline needs two samples with a stable head roll; an unstable pair restarts from this sample.
       if (challenge.step === 0 && followsStep && challenge.consecutive === 1 &&
@@ -161,7 +175,7 @@ export class LivenessChallenges {
           challenge.neutralRoll = challenge.neutralRollSum / 2;
         }
       }
-      if (challenge.consecutive === 2) {
+      if (challenge.consecutive === challenge.holds[challenge.step]) {
         challenge.step++;
         challenge.consecutive = 0;
         challenge.stepExpiresAt = Math.min(now + this.stepTimeoutMs, challenge.expiresAt);

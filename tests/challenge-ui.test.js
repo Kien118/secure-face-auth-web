@@ -134,3 +134,16 @@ test('a lost sample response aborts the attempt without retrying the old token',
   assert.equal(updates, 1);
   assert.deepEqual(methods, ['POST', 'POST', 'DELETE']);
 });
+
+test('the next sample waits 300 ms after the previous answer, so the server never sees them too fast', async t => {
+  const sends = []; const answers = []; let samples = 0;
+  setup(t, async url => {
+    if (!url.endsWith('/samples')) return response(challenge());
+    sends.push(Date.now());
+    const body = ++samples < 3 ? challenge() : { status: 'SEQUENCE_COMPLETE' };
+    answers.push(Date.now());
+    return response(body);
+  });
+  await runChallenge({ video, accountId: 'alice', signal: new AbortController().signal, onUpdate() {} });
+  for (let i = 1; i < sends.length; i++) assert.ok(sends[i] - answers[i - 1] >= 295, `gap ${sends[i] - answers[i - 1]} ms`);
+});

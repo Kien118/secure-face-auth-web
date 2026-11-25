@@ -29,10 +29,9 @@ export async function runChallenge({ video, accountId, signal, onUpdate }) {
       if (Date.now() >= challenge.expiresAt) throw Object.assign(new Error(), { code: 'CHALLENGE_EXPIRED' });
       if (Date.now() >= state.stepExpiresAt) throw Object.assign(new Error(), { code: 'STEP_EXPIRED' });
     };
-    let lastSent = 0;
+    let lastAnswer = 0;
     while (true) {
-      // Send the next sample as soon as the previous answer arrives; the round trip is the pacing.
-      const wait = lastSent + MIN_GAP_MS - Date.now();
+      const wait = lastAnswer + MIN_GAP_MS - Date.now();
       if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
       checkActive();
       let result;
@@ -40,14 +39,15 @@ export async function runChallenge({ video, accountId, signal, onUpdate }) {
       try {
         const frame = await captureFrame(video, undefined, { detect: false });
         checkActive();
-        lastSent = Date.now();
         result = await postJson(`/api/liveness/challenges/${challengeId}/samples`, {
           frame, sampleToken: state.sampleToken
         }, signal);
-        result = { ...result, roundTripMs: Date.now() - started };
+        lastAnswer = Date.now();
+        result = { ...result, roundTripMs: lastAnswer - started };
       } catch (error) {
         // Face lost (too far a turn, out of frame): skip this frame and keep the attempt and token.
         if (!FACE_LOST.has(error.code)) throw error;
+        lastAnswer = Date.now();
         signal.throwIfAborted();
         onUpdate({ ...state, faceLost: true });
         continue;

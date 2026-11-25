@@ -169,7 +169,7 @@ per-sample evidence for the report.
 Speed (Day 5): the server runs the tiny detector first and SSD MobileNet only when it finds no face
 (about 150 ms instead of 450 ms per frontal frame on the development laptop); challenge frames are
 downscaled to 480 px and skip the browser-side detector; the next sample is sent as soon as the
-previous answer arrives (minimum gap 200 ms). Each response reports `serverMs`, the browser adds the
+previous answer arrives plus 300 ms (the server needs at least 150 ms between analysed samples). Each response reports `serverMs`, the browser adds the
 round trip, and both appear next to the requirements. Limits are now 20 s per step and 60 s per attempt. The preview is mirrored (CSS only; frames sent to the server are not),
 and prompts use the user's own left/right. Action names keep raw-image coordinates:
 `turn_left` (nose toward image left) is shown as "Turn to your right".

@@ -129,12 +129,3 @@ test('encrypted store persists templates and rejects tampering or swapping betwe
   writeFileSync(join(other, 'templates.json'), raw); // stolen file without the key
   assert.throws(() => new EncryptedTemplateStore(other).get('alice'), /authenticate/);
 });
-
-test('template status tells the page whether an account is enrolled, with a validated account ID', async t => {
-  const f = await fixture(t);
-  const status = async id => f.call(`templates/${id}`, undefined, { method: 'GET' });
-  assert.deepEqual(await (await status('alice')).json(), { status: 'TEMPLATE_STATUS', enrolled: false });
-  await f.enroll();
-  assert.equal((await (await status('alice')).json()).enrolled, true);
-  assert.equal((await status('a%20b')).status, 400);
-});

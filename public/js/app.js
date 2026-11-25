@@ -22,7 +22,7 @@ const messages = {
   MODEL_ERROR: 'Model loading or inference failed. Run npm run models:download and retry.',
   SERVER_ERROR: 'Server connection or response error.',
   NO_TEMPLATE: 'No face is enrolled for this account (never enrolled, or deleted). Click "Enroll face" first.',
-  TEMPLATE_EXISTS: 'This account already has a template. Log in and delete it to enroll again.',
+  TEMPLATE_EXISTS: 'This account is already enrolled. Continue with "Verify baseline 1:1".',
   TEMPLATE_CREATED: 'Template created and stored encrypted on the server. Now start the login challenge.',
   MATCH: 'Identity match only (baseline). Liveness was not checked and no session was issued.',
   FACE_TOO_SMALL: 'Move closer to the camera.',
@@ -56,21 +56,13 @@ function status(code) {
 }
 function clearResults() { workspace.resetMetrics(); workspace.resetChallenge(); }
 const camera = new Camera($('video'), () => stop());
-// Guided order: enroll, then a matching 1:1 verify, then the challenge. This is page guidance only;
-// the server still refuses every check for an account without a template.
+// Guided order: every visit (and every account change) starts at "Enroll face", then a matching 1:1
+// verify, then the challenge. An already-enrolled account answers TEMPLATE_EXISTS, which also moves
+// on to verify. Page guidance only: the server still refuses every check without a template.
 const flow = { enrolled: false, verified: false };
-let flowCheck = 0;
-async function refreshFlow() {
+function resetFlow() {
   flow.enrolled = flow.verified = false;
   buttons();
-  const accountId = $('account').value.trim();
-  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(accountId)) return;
-  const current = ++flowCheck;
-  try {
-    const response = await fetch(`/api/templates/${accountId}`);
-    const result = await response.json();
-    if (current === flowCheck && response.ok) { flow.enrolled = result.enrolled === true; buttons(); }
-  } catch { /* Unknown state keeps enroll as the next step. */ }
 }
 function buttons() {
   $('models').disabled = busy || camera.active;
@@ -134,7 +126,7 @@ $('account').addEventListener('input', () => {
   if (busy) return;
   clearResults();
   status('ACCOUNT_CHANGED');
-  refreshFlow();
+  resetFlow();
 });
 for (const [id, endpoint] of [['enroll', 'templates'], ['verify', 'verify']]) {
   $(id).addEventListener('click', async () => {
@@ -188,4 +180,4 @@ $('challenge').addEventListener('click', async () => {
 });
 window.addEventListener('pagehide', stop);
 document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); });
-refreshFlow();
+resetFlow();

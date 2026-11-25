@@ -28,7 +28,7 @@ test('real app orchestration enforces consent, readiness, cancellation and fresh
   } }; // Synthetic only; no physical camera or face data is used.
   let modelLoads = 0; let cameraCalls = 0; let networkError = false;
   let capture = async () => [face];
-  const tracks = []; const requests = []; let enrolledOnServer = false;
+  const tracks = []; const requests = [];
   const lastPost = () => requests.filter(r => r.options?.method === 'POST').at(-1);
   const net = { loadFromUri: async () => {
     if (++modelLoads === 1) modelStarted.resolve();
@@ -51,8 +51,6 @@ test('real app orchestration enforces consent, readiness, cancellation and fresh
     fetch: async (url, options) => {
       requests.push({ url, options });
       if (networkError) throw new TypeError('network unavailable');
-      if (!options) return { ok: true, json: async () => ({ status: 'TEMPLATE_STATUS', enrolled: enrolledOnServer }) };
-      if (url.endsWith('/templates')) enrolledOnServer = true;
       return { ok: true, json: async () => url.endsWith('/templates')
         ? { status: 'TEMPLATE_CREATED' }
         : { status: 'MATCH', distance: 0.2142, threshold: 0.6, authenticated: false } };
@@ -111,6 +109,11 @@ test('real app orchestration enforces consent, readiness, cancellation and fresh
     assert.equal(nodes['challenge-panel'].dataset.state, 'idle');
     assert.equal(nodes['pose-fill'].style.width, '0%');
     assert.equal(nodes['challenge-step'].textContent, 'Not started');
+    // A new account starts the guided order again at enrollment.
+    assert.deepEqual(['enroll', 'verify', 'challenge'].map(id => nodes[id].disabled), [false, true, true]);
+    assert.match(nodes.enroll.className, /button-primary/);
+    await nodes.enroll.emit('click');
+    assert.equal(nodes.verify.disabled, false);
   });
 
   await t.test('a network failure clears the previous successful match and its measurements', async () => {

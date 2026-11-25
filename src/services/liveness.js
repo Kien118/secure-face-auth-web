@@ -54,7 +54,7 @@ export function measureLandmarks(points) {
 
 export class LivenessChallenges {
   #challenges = new Map();
-  constructor(engine, { now = Date.now, random = randomInt, timeoutMs = 45000, stepTimeoutMs = 15000, maxChallenges = 100,
+  constructor(engine, { now = Date.now, random = randomInt, timeoutMs = 60000, stepTimeoutMs = 20000, maxChallenges = 100,
     eyeOpen = 0.25, headTurn = 0.15, headCenter = 0.10, headTiltDeg = 12, headLevelDeg = 6, limiter = null } = {}) {
     if (typeof now !== 'function' || typeof random !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs <= 0 ||
         !Number.isInteger(stepTimeoutMs) || stepTimeoutMs <= 0 ||

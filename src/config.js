@@ -8,8 +8,8 @@ export function readConfig(env = process.env) {
     throw new Error('PORT must be an integer in [0, 65535].');
   }
   return { threshold, port, host: env.HOST ?? '127.0.0.1', dataDir: env.DATA_DIR ?? 'data', liveness: {
-    timeoutMs: Number(env.LIVENESS_TIMEOUT_MS ?? '45000'),
-    stepTimeoutMs: Number(env.LIVENESS_STEP_TIMEOUT_MS ?? '15000'),
+    timeoutMs: Number(env.LIVENESS_TIMEOUT_MS ?? '60000'),
+    stepTimeoutMs: Number(env.LIVENESS_STEP_TIMEOUT_MS ?? '20000'),
     eyeOpen: Number(env.LIVENESS_EYE_OPEN ?? '0.25'),
     headTiltDeg: Number(env.LIVENESS_HEAD_TILT_DEG ?? '12'),
     headLevelDeg: Number(env.LIVENESS_HEAD_LEVEL_DEG ?? '6'),

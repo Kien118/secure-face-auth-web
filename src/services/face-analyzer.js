@@ -25,6 +25,7 @@ export class FrameAnalyzer {
       require('@tensorflow/tfjs-backend-wasm').setWasmPaths(wasmDir);
       await this.faceapi.tf.setBackend('wasm');
       await this.faceapi.tf.ready();
+      await this.faceapi.nets.tinyFaceDetector.loadFromDisk(modelDir);
       await this.faceapi.nets.ssdMobilenetv1.loadFromDisk(packageModelDir);
       await this.faceapi.nets.faceLandmark68Net.loadFromDisk(packageModelDir);
       // Recognition weights are byte-identical to the pinned browser copy, so stored templates stay valid.
@@ -53,8 +54,11 @@ export class FrameAnalyzer {
     const { tensor, width, height } = this.#decode(frame);
     try {
       const api = this.faceapi;
-      const faces = await api.detectAllFaces(tensor, new api.SsdMobilenetv1Options({ minConfidence: 0.5 }))
-        .withFaceLandmarks().withFaceDescriptors();
+      // Fast path: the tiny detector (~10x cheaper) handles frontal faces; SSD MobileNet runs only
+      // when it finds nothing, which is typically a turned or tilted head.
+      const find = options => api.detectAllFaces(tensor, options).withFaceLandmarks().withFaceDescriptors();
+      let faces = await find(new api.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }));
+      if (!faces.length) faces = await find(new api.SsdMobilenetv1Options({ minConfidence: 0.5 }));
       if (faces.length !== 1) throw new InputError(faces.length ? 'MULTIPLE_FACES' : 'NO_FACE', 422);
       if (faces[0].detection.box.width < width * this.minFaceRatio) throw new InputError('FACE_TOO_SMALL', 422);
       // One scale for both axes preserves eye ratios on non-square frames (matches the old client code).

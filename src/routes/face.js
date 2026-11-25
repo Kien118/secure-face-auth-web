@@ -51,6 +51,7 @@ export function faceRoutes(engine, { analyzer, sessions, limiter, ...options } =
     const accountId = challenges.accountOf(req.params.id);
     if (!accountId) throw new InputError('CHALLENGE_NOT_FOUND', 404);
     let evidence;
+    const started = performance.now();
     try {
       const body = req.body;
       // sampleToken may be missing here; submit() rejects that as INVALID_SAMPLE_TOKEN.
@@ -63,7 +64,8 @@ export function faceRoutes(engine, { analyzer, sessions, limiter, ...options } =
       if (!FACE_LOST.has(error.code)) challenges.cancel(req.params.id);
       throw error;
     }
-    const result = challenges.submit(req.params.id, evidence);
+    const serverMs = Math.round(performance.now() - started);
+    const result = { ...challenges.submit(req.params.id, evidence), serverMs };
     if (result.status === 'SEQUENCE_COMPLETE') {
       sessions.create(res, accountId, req.secure);
       return res.json({ ...result, accountId, authenticated: true });

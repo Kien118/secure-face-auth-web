@@ -35,27 +35,29 @@ test('challenge sends only a JPEG frame and token, and cleans up on completion',
   });
   const result = await runChallenge({ video, accountId: 'alice', signal: new AbortController().signal, onUpdate: r => updates.push(r) });
   assert.equal(result.authenticated, false);
+  assert.ok(Number.isFinite(result.roundTripMs)); // measured per sample and shown with the requirements
   assert.equal(updates.length, 2);
   assert.equal(calls.length, 3);
   assert.equal(calls.at(-1).options.method, 'DELETE');
 });
 
-test('cancel while inference is pending prevents sample POST and stale UI updates', async t => {
-  let finishCapture; let captureStarted;
-  const started = new Promise(resolve => { captureStarted = resolve; });
+test('cancel while a sample request is pending prevents stale UI updates', async t => {
+  let finishSample; let sampleSent;
+  const sent = new Promise(resolve => { sampleSent = resolve; });
   const methods = []; let updates = 0;
-  setup(t, async (_url, options) => { methods.push(options.method); return response(challenge()); }, () => {
-    captureStarted(); return new Promise(resolve => { finishCapture = resolve; });
+  setup(t, async (url, options) => {
+    methods.push(options.method);
+    if (!url.endsWith('/samples')) return response(challenge());
+    sampleSent(); return new Promise(resolve => { finishSample = resolve; });
   });
   const controller = new AbortController();
   const run = runChallenge({ video, accountId: 'alice', signal: controller.signal, onUpdate: () => updates++ });
-  await started;
-  controller.abort(); finishCapture([face]);
+  await sent;
+  controller.abort(); finishSample(response(challenge()));
   await assert.rejects(run, { name: 'AbortError' });
-  assert.deepEqual(methods, ['POST', 'DELETE']);
+  assert.deepEqual(methods, ['POST', 'POST', 'DELETE']);
   assert.equal(updates, 1);
 });
-
 test('late create response after cancellation is deleted without capturing', async t => {
   let finishCreate; let called;
   const created = new Promise(resolve => { called = resolve; });
@@ -73,27 +75,28 @@ test('late create response after cancellation is deleted without capturing', asy
   assert.deepEqual(methods, ['POST', 'DELETE']);
 });
 
-test('frames the tiny browser detector misses still go to the server; a server NO_FACE is skipped', async t => {
+test('challenge frames skip the local detector; a server NO_FACE is skipped and the attempt continues', async t => {
   const methods = []; const updates = []; let samples = 0;
   setup(t, async (url, options) => {
     methods.push(options.method);
     if (!url.endsWith('/samples')) return response(challenge());
-    // The server's stronger detector also misses the first frame, then sees the face.
+    // The server's detector misses the first (turned) frame, then sees the face.
     return ++samples === 1 ? response({ status: 'NO_FACE' }, false) : response({ status: 'SEQUENCE_COMPLETE' });
-  }, async () => []); // tiny detector never sees the turned face
+  }, () => assert.fail('the browser must not run its own detector during a challenge'));
   const result = await runChallenge({ video, accountId: 'alice', signal: new AbortController().signal, onUpdate: r => updates.push(r) });
   assert.equal(result.status, 'SEQUENCE_COMPLETE');
   assert.deepEqual(methods, ['POST', 'POST', 'POST', 'DELETE']); // create, skipped sample, accepted sample, cleanup
   assert.equal(updates.filter(update => update.faceLost).length, 1);
 });
-
-test('multiple faces still end the attempt and never submit a sample', async t => {
+test('a server MULTIPLE_FACES ends the attempt', async t => {
   const methods = [];
-  setup(t, async (_url, options) => { methods.push(options.method); return response(challenge()); }, async () => [face, face]);
+  setup(t, async (url, options) => {
+    methods.push(options.method);
+    return url.endsWith('/samples') ? response({ status: 'MULTIPLE_FACES' }, false) : response(challenge());
+  });
   await assert.rejects(runChallenge({ video, accountId: 'alice', signal: new AbortController().signal, onUpdate() {} }), e => e.code === 'MULTIPLE_FACES');
-  assert.deepEqual(methods, ['POST', 'DELETE']);
+  assert.deepEqual(methods, ['POST', 'POST', 'DELETE']);
 });
-
 test('each sample uses the latest token across a randomized turn-first sequence, without speech', async t => {
   const original = { speechSynthesis: globalThis.speechSynthesis };
   let spoken = 0; let samples = 0;
@@ -103,7 +106,7 @@ test('each sample uses the latest token across a randomized turn-first sequence,
     if (!url.endsWith('/samples')) return response({ ...challenge(), step: 3, action: 'tilt_left' });
     assert.equal(JSON.parse(options.body).sampleToken, String.fromCharCode(97 + samples).repeat(64));
     samples++;
-    return response(samples < 3 ? { ...challenge(), step: 4, action: 'level_head', sampleToken: String.fromCharCode(97 + samples).repeat(64) }
+    return response(samples < 3 ? { ...challenge(), step: 4, action: 'center', sampleToken: String.fromCharCode(97 + samples).repeat(64) }
       : { status: 'SEQUENCE_COMPLETE', step: 5 });
   });
   const result = await runChallenge({ video, accountId: 'alice', signal: new AbortController().signal, onUpdate() {} });
@@ -112,23 +115,12 @@ test('each sample uses the latest token across a randomized turn-first sequence,
   assert.equal(spoken, 0, 'eyes stay open, so no spoken cue is needed');
 });
 
-test('deadline reached during inference prevents the sample from leaving the browser', async t => {
-  let finishCapture; let captureStarted;
-  const started = new Promise(resolve => { captureStarted = resolve; });
-  const originalNow = Date.now; let now = originalNow();
-  Date.now = () => now;
-  t.after(() => { Date.now = originalNow; });
+test('an expired step deadline stops the attempt before another sample leaves the browser', async t => {
   const methods = [];
-  setup(t, async (_url, options) => { methods.push(options.method); return response(challenge()); }, () => {
-    captureStarted(); return new Promise(resolve => { finishCapture = resolve; });
-  });
-  const run = runChallenge({ video, accountId: 'alice', signal: new AbortController().signal, onUpdate() {} });
-  await started;
-  now += 15000; finishCapture([face]);
-  await assert.rejects(run, e => e.code === 'STEP_EXPIRED');
+  setup(t, async (_url, options) => { methods.push(options.method); return response({ ...challenge(), stepExpiresAt: Date.now() - 1 }); });
+  await assert.rejects(runChallenge({ video, accountId: 'alice', signal: new AbortController().signal, onUpdate() {} }), e => e.code === 'STEP_EXPIRED');
   assert.deepEqual(methods, ['POST', 'DELETE']);
 });
-
 test('a lost sample response aborts the attempt without retrying the old token', async t => {
   const methods = []; let samples = 0; let updates = 0;
   setup(t, async (url, options) => {

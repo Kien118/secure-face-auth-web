@@ -111,6 +111,7 @@ test('ordered server-measured evidence completes the sequence, consumes the chal
   }
   assert.equal(result.status, 'SEQUENCE_COMPLETE');
   assert.equal(result.accountId, 'alice');
+  assert.ok(Number.isInteger(result.serverMs)); // server analysis time, shown in the UI
   assert.equal(result.distance, 0);
   assert.equal(result.sampleToken, undefined);
   assert.match(cookie, /^sid=[\w-]{43}; HttpOnly; SameSite=Strict; Path=\//);

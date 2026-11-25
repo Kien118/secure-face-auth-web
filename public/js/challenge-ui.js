@@ -1,6 +1,9 @@
 import { captureFrame } from './face-client.js';
 
 const FACE_LOST = new Set(['NO_FACE', 'FACE_TOO_SMALL']);
+// Counted from the previous answer, not from sending: the server spaces samples by when it finished
+// analysing them (minimum 150 ms), and a fast frontal frame can finish soon after a slow turned one.
+const MIN_GAP_MS = 300;
 
 export async function postJson(path, body, signal) {
   const timeout = AbortSignal.timeout(10000);
@@ -26,16 +29,22 @@ export async function runChallenge({ video, accountId, signal, onUpdate }) {
       if (Date.now() >= challenge.expiresAt) throw Object.assign(new Error(), { code: 'CHALLENGE_EXPIRED' });
       if (Date.now() >= state.stepExpiresAt) throw Object.assign(new Error(), { code: 'STEP_EXPIRED' });
     };
+    let lastSent = 0;
     while (true) {
-      await new Promise(resolve => setTimeout(resolve, 250));
+      // Send the next sample as soon as the previous answer arrives; the round trip is the pacing.
+      const wait = lastSent + MIN_GAP_MS - Date.now();
+      if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
       checkActive();
       let result;
+      const started = Date.now();
       try {
-        const frame = await captureFrame(video, undefined, { allowNoFace: true });
+        const frame = await captureFrame(video, undefined, { detect: false });
         checkActive();
+        lastSent = Date.now();
         result = await postJson(`/api/liveness/challenges/${challengeId}/samples`, {
           frame, sampleToken: state.sampleToken
         }, signal);
+        result = { ...result, roundTripMs: Date.now() - started };
       } catch (error) {
         // Face lost (too far a turn, out of frame): skip this frame and keep the attempt and token.
         if (!FACE_LOST.has(error.code)) throw error;

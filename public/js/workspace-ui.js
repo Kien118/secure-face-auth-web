@@ -60,7 +60,9 @@ export class WorkspaceUI {
     const checks = Array.isArray(result.checks) ? result.checks : [];
     this.$('checks-panel').hidden = !checks.length;
     if (!checks.length) return;
-    this.$('checks-title').textContent = `Server requirements · ${actionLabels[result.checksFor] ?? 'last sample'}`;
+    const timing = Number.isFinite(result.roundTripMs)
+      ? ` · ${result.roundTripMs} ms${Number.isFinite(result.serverMs) ? ` (server ${result.serverMs} ms)` : ''}` : '';
+    this.$('checks-title').textContent = `Server requirements · ${actionLabels[result.checksFor] ?? 'last sample'}${timing}`;
     for (const item of checks) {
       if (!Number.isFinite(item?.value) || !Number.isFinite(item?.target)) continue;
       const digits = Number.isInteger(item.target) ? 1 : 3;

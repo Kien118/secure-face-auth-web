@@ -3,11 +3,17 @@ import helmet from 'helmet';
 import { fileURLToPath } from 'node:url';
 import { FaceEngine, InputError } from './services/face-engine.js';
 import { faceRoutes } from './routes/face.js';
+import { FrameAnalyzer } from './services/face-analyzer.js';
+import { AttemptLimiter, Sessions } from './services/sessions.js';
 
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
 const browserBundle = fileURLToPath(new URL('../node_modules/face-api.js/dist/face-api.min.js', import.meta.url));
 
-export function createApp({ threshold = 0.6, liveness } = {}) {
+// Routes that carry JPEG frames get a larger body limit; everything else keeps the strict 8 KiB.
+const FRAME_ROUTES = /^\/(templates|verify|liveness\/challenges\/[^/]+\/samples)$/;
+
+export function createApp({ threshold = 0.6, liveness, analyzer = new FrameAnalyzer(), templateStore,
+  sessions = new Sessions(), limiter = new AttemptLimiter() } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.use(helmet({
@@ -33,9 +39,12 @@ export function createApp({ threshold = 0.6, liveness } = {}) {
     }
     next();
   });
-  app.use('/api', express.json({ limit: '8kb', strict: true }));
-  app.get('/api/health', (_req, res) => res.json({ status: 'ok', mode: 'identity-and-challenge-poc', challengePoc: true, liveness: false }));
-  app.use('/api', faceRoutes(new FaceEngine(threshold), liveness));
+  const smallJson = express.json({ limit: '8kb', strict: true });
+  const frameJson = express.json({ limit: '1mb', strict: true });
+  app.use('/api', (req, res, next) => (FRAME_ROUTES.test(req.path) ? frameJson : smallJson)(req, res, next));
+  app.get('/api/health', (_req, res) => res.json({ status: 'ok', mode: 'server-evidence-challenge',
+    evidence: 'server-measured-frames', liveness: 'challenge-response', pad: false, sessions: true }));
+  app.use('/api', faceRoutes(new FaceEngine(threshold, 100, templateStore), { ...liveness, analyzer, sessions, limiter }));
   app.get('/vendor/face-api.min.js', (_req, res) => res.sendFile(browserBundle));
   app.use(express.static(publicDir, { dotfiles: 'deny', index: 'index.html' }));
   app.use((_req, res) => res.status(404).json({ status: 'NOT_FOUND' }));

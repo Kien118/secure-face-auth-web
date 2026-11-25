@@ -4,7 +4,7 @@ import { WorkspaceUI } from '../public/js/workspace-ui.js';
 
 function fixture() {
   const ids = ['camera-state', 'model-state', 'camera-placeholder', 'camera-stage', 'status-panel',
-    'status-heading', 'metric-distance', 'metric-threshold', 'metric-ear', 'metric-pose', 'metrics-panel',
+    'status-heading', 'metric-distance', 'metric-threshold', 'metric-ear', 'metric-pose', 'metric-mouth', 'metrics-panel',
     'result-placeholder', 'challenge-progress', 'challenge-step', 'challenge-action', 'challenge-prompt',
     'challenge-panel', 'challenge-timer', 'step-time', 'attempt-time'];
   const nodes = Object.fromEntries(ids.map(id => [id, { dataset: {}, textContent: '', hidden: false, max: 5, value: 0 }]));
@@ -30,14 +30,14 @@ test('device indicators reflect actual state, without inferring enrollment or au
   assert.equal(nodes['camera-stage'].dataset.busy, 'true');
 });
 
-test('status distinguishes identity matching from completing an unverified challenge', () => {
+test('status distinguishes identity matching from a completed challenge login', () => {
   const { ui, nodes } = fixture();
   ui.setStatus('MATCH');
   assert.equal(nodes['status-heading'].textContent, 'Identity match');
   assert.equal(nodes['status-panel'].dataset.tone, 'success');
   ui.setStatus('SEQUENCE_COMPLETE');
-  assert.equal(nodes['status-heading'].textContent, 'Sequence complete');
-  assert.equal(nodes['status-panel'].dataset.tone, 'warning');
+  assert.equal(nodes['status-heading'].textContent, 'Logged in');
+  assert.equal(nodes['status-panel'].dataset.tone, 'success');
   ui.setStatus('UNKNOWN_SERVER_ERROR');
   assert.equal(nodes['status-panel'].dataset.tone, 'error');
 });
@@ -63,10 +63,10 @@ test('countdown uses returned deadlines, advances steps without extra intervals,
   assert.equal(f.nodes['attempt-time'].textContent, '45s');
   f.advance(1100);
   assert.equal(f.nodes['step-time'].textContent, '14s');
-  f.ui.updateChallenge(active({ step: 1, action: 'close_eyes', stepExpiresAt: 17000 }));
+  f.ui.updateChallenge(active({ step: 1, action: 'tilt_left', stepExpiresAt: 17000 }));
   assert.equal(f.starts(), 1);
   assert.equal(f.nodes['challenge-progress'].value, 1);
-  assert.equal(f.nodes['challenge-action'].textContent, 'Close your eyes');
+  assert.equal(f.nodes['challenge-action'].textContent, 'Tilt to your right shoulder');
   f.advance(15000);
   assert.equal(f.nodes['step-time'].textContent, '0s');
   assert.equal(f.nodes['challenge-panel'].dataset.state, 'active');
@@ -80,14 +80,14 @@ test('completion and reset clear timers; identity failure retains the known step
   assert.equal(f.stops(), 1);
   assert.equal(f.nodes['challenge-progress'].value, 5);
   assert.equal(f.nodes['challenge-timer'].hidden, true);
-  f.ui.updateChallenge(active({ step: 2, action: 'open_eyes', prompt: 'Open your eyes.' }));
+  f.ui.updateChallenge(active({ step: 2, action: 'level_head', prompt: 'Straighten your head.' }));
   f.ui.updateChallenge({ status: 'NO_MATCH' });
   assert.equal(f.stops(), 2);
   assert.equal(f.nodes['challenge-panel'].dataset.state, 'failed');
   assert.equal(f.nodes['challenge-progress'].value, 2);
   assert.equal(f.nodes['challenge-step'].textContent, 'Identity mismatch · Step 3 of 5');
-  assert.equal(f.nodes['challenge-action'].textContent, 'Open your eyes');
-  assert.equal(f.nodes['challenge-prompt'].textContent, 'Open your eyes.');
+  assert.equal(f.nodes['challenge-action'].textContent, 'Straighten your head');
+  assert.equal(f.nodes['challenge-prompt'].textContent, 'Straighten your head.');
   f.ui.updateChallenge(active({ action: 'future_action' }));
   assert.equal(f.nodes['challenge-action'].textContent, 'Follow the current instruction');
   f.ui.resetChallenge({ label: 'Cancelled' });

@@ -4,7 +4,12 @@ import { FaceEngine } from '../src/services/face-engine.js';
 import { LivenessChallenges, measureLandmarks } from '../src/services/liveness.js';
 
 const descriptor = () => Array(128).fill(0); // Synthetic fixtures only; no captured biometric data.
-function landmarks({ ear = 0.3, noseOffset = 0 } = {}) {
+function tiltPoints(points, degrees) {
+  const a = degrees * Math.PI / 180; // rotate about the image center; negative = image-left eye lower
+  return points.map(([x, y]) => [0.5 + (x - 0.5) * Math.cos(a) - (y - 0.5) * Math.sin(a),
+    0.5 + (x - 0.5) * Math.sin(a) + (y - 0.5) * Math.cos(a)]);
+}
+function landmarks({ ear = 0.3, noseOffset = 0, tilt = 0 } = {}) {
   const points = Array.from({ length: 68 }, () => [0.5, 0.5]);
   for (const [index, x] of [[36, 0.3], [42, 0.6]]) {
     const width = 0.1;
@@ -14,7 +19,7 @@ function landmarks({ ear = 0.3, noseOffset = 0 } = {}) {
       [x + 2 * width / 3, 0.4 + halfHeight], [x + width / 3, 0.4 + halfHeight]);
   }
   points[30] = [0.5 + noseOffset * 0.3, 0.6];
-  return points;
+  return tilt ? tiltPoints(points, tilt) : points;
 }
 function fixture(options = {}) {
   let time = 1000;
@@ -41,17 +46,19 @@ function sample(f, id, pose = {}) {
   return f.send(id, f.evidence(pose));
 }
 
-test('landmark measurements preserve EAR and nose displacement under in-plane rotation', () => {
+test('landmark measurements preserve EAR, nose displacement and mouth opening under in-plane rotation', () => {
   const points = landmarks({ ear: 0.3, noseOffset: -0.3 });
   const original = measureLandmarks(points);
   assert.ok(Math.abs(original.ear - 0.3) < 1e-10);
   assert.ok(Math.abs(original.noseOffset + 0.3) < 1e-10);
+  assert.ok(Math.abs(original.roll) < 1e-10);
   const angle = Math.PI / 9;
   const rotated = points.map(([x, y]) => [0.5 + (x - 0.5) * Math.cos(angle) - (y - 0.5) * Math.sin(angle),
     0.5 + (x - 0.5) * Math.sin(angle) + (y - 0.5) * Math.cos(angle)]);
   const result = measureLandmarks(rotated);
   assert.ok(Math.abs(result.ear - original.ear) < 1e-10);
   assert.ok(Math.abs(result.noseOffset - original.noseOffset) < 1e-10);
+  assert.ok(Math.abs(result.roll - 20) < 1e-10); // rotation by π/9 = 20° shows up only as roll
 });
 
 test('complete ordered sequence checks every sample but never grants authentication', () => {
@@ -61,7 +68,7 @@ test('complete ordered sequence checks every sample but never grants authenticat
   assert.equal(created.totalSteps, 5);
   assert.equal(created.authenticated, false);
   let result;
-  for (const pose of [{}, { ear: 0.1 }, {}, { noseOffset: -0.3 }, {}]) {
+  for (const pose of [{}, { tilt: -15 }, {}, { noseOffset: -0.3 }, {}]) {
     const first = sample(f, id, pose);
     assert.equal(first.sequencePassed, false);
     result = sample(f, id, pose);
@@ -70,27 +77,27 @@ test('complete ordered sequence checks every sample but never grants authenticat
   assert.equal(result.step, 5);
   assert.equal(result.distance, 0);
   assert.equal(result.sequencePassed, true);
-  assert.equal(result.liveness, 'UNVERIFIED_CLIENT_EVIDENCE');
+  assert.equal(result.liveness, 'SERVER_MEASURED_CHALLENGE');
   assert.equal(result.authenticated, false);
   assert.throws(() => sample(f, id), /CHALLENGE_NOT_FOUND/);
 });
 
 test('static poses and out-of-order actions cannot complete the sequence', () => {
   const f = fixture(); const { challengeId: id } = f.create();
-  assert.equal(sample(f, id, { ear: 0.1 }).step, 0);
-  sample(f, id); assert.equal(sample(f, id, { ear: 0.1 }).step, 0);
+  assert.equal(sample(f, id, { tilt: -15 }).step, 0);
+  sample(f, id); assert.equal(sample(f, id, { tilt: -15 }).step, 0);
   sample(f, id); assert.equal(sample(f, id).step, 1);
   for (let i = 0; i < 8; i++) assert.equal(sample(f, id).step, 1);
   assert.equal(sample(f, id, { noseOffset: -0.3 }).step, 1);
-  sample(f, id, { ear: 0.1 }); sample(f, id);
-  assert.equal(sample(f, id, { ear: 0.1 }).step, 1);
-  assert.equal(sample(f, id, { ear: 0.1 }).step, 2);
+  sample(f, id, { tilt: -15 }); sample(f, id);
+  assert.equal(sample(f, id, { tilt: -15 }).step, 1);
+  assert.equal(sample(f, id, { tilt: -15 }).step, 2);
 });
 
 test('turn and return are measured relative to the initial neutral pose', () => {
   const f = fixture(); const { challengeId: id } = f.create();
   let result;
-  for (const pose of [{ noseOffset: 0.08 }, { ear: 0.1, noseOffset: 0.08 },
+  for (const pose of [{ noseOffset: 0.08 }, { tilt: -15, noseOffset: 0.08 },
     { noseOffset: 0.08 }, { noseOffset: -0.17 }, { noseOffset: 0.08 }]) {
     sample(f, id, pose); result = sample(f, id, pose);
   }
@@ -100,7 +107,7 @@ test('turn and return are measured relative to the initial neutral pose', () => 
 test('wrong identity at a later step terminates the account-bound challenge', () => {
   const f = fixture(); const { challengeId: id } = f.create();
   sample(f, id); sample(f, id);
-  const evidence = f.evidence({ ear: 0.1 }); evidence.descriptor.fill(1); f.advance();
+  const evidence = f.evidence({ tilt: -15 }); evidence.descriptor.fill(1); f.advance();
   const result = f.send(id, evidence);
   assert.equal(result.status, 'NO_MATCH');
   assert.equal(result.authenticated, false);
@@ -157,25 +164,25 @@ test('creation validates account/template, caps RAM and reclaims expired challen
 
 test('liveness configuration rejects non-finite and inverted thresholds', () => {
   for (const options of [{ timeoutMs: 0 }, { stepTimeoutMs: 0 }, { stepTimeoutMs: Infinity }, { random: null }, { maxChallenges: 0 }, { eyeOpen: NaN },
-    { eyeClosed: 0.3 }, { eyeOpen: Infinity }, { headCenter: 0.2 }, { headTurn: -1 }]) {
+    { headTiltDeg: 5 }, { headLevelDeg: NaN }, { eyeOpen: Infinity }, { headCenter: 0.2 }, { headTurn: -1 }]) {
     assert.throws(() => new LivenessChallenges(new FaceEngine(), options), /Invalid liveness configuration/);
   }
 });
 
 test('server randomizes both action order and turn direction without exposing future actions', () => {
-  for (const order of [0, 1]) for (const direction of [0, 1]) {
-    const choices = [order, direction];
+  for (const order of [0, 1]) for (const direction of [0, 1]) for (const tiltDirection of [0, 1]) {
+    const choices = [order, direction, tiltDirection];
     const f = fixture({ random: max => { assert.equal(max, 2); return choices.shift(); } });
     let result = f.create();
     const id = result.challengeId;
-    const blink = ['close_eyes', 'open_eyes'];
+    const blink = [tiltDirection === 0 ? 'tilt_left' : 'tilt_right', 'level_head'];
     const turn = [direction === 0 ? 'turn_left' : 'turn_right', 'return_center'];
     const expected = ['look_straight', ...(order === 0 ? [...blink, ...turn] : [...turn, ...blink])];
     for (const action of expected) {
       assert.equal(result.action, action);
       assert.equal(result.plan, undefined);
       assert.equal(result.steps, undefined);
-      const pose = action === 'close_eyes' ? { ear: 0.1 }
+      const pose = action === 'tilt_left' ? { tilt: -15 } : action === 'tilt_right' ? { tilt: 15 }
         : action === 'turn_left' ? { noseOffset: -0.3 }
           : action === 'turn_right' ? { noseOffset: 0.3 } : {};
       sample(f, id, pose); result = sample(f, id, pose);
@@ -192,7 +199,7 @@ test('server randomizes both action order and turn direction without exposing fu
 test('each accepted sample rotates its token, including a pose which does not advance', () => {
   const f = fixture(); const created = f.create(); const id = created.challengeId;
   assert.match(created.sampleToken, /^[a-f0-9]{64}$/);
-  const wrongPose = sample(f, id, { ear: 0.1 });
+  const wrongPose = sample(f, id, { tilt: -15 });
   assert.equal(wrongPose.step, 0);
   assert.notEqual(wrongPose.sampleToken, created.sampleToken);
   f.advance();
@@ -218,10 +225,10 @@ test('step deadlines use server time, reset only after advancement, and are boun
   sample(f, id); result = sample(f, id);
   assert.equal(result.stepExpiresAt, 2400);
   f.advance(500);
-  result = sample(f, id, { ear: 0.1 });
+  result = sample(f, id, { tilt: -15 });
   assert.equal(result.stepExpiresAt, 2400);
   f.advance(300);
-  assert.throws(() => sample(f, id, { ear: 0.1 }), /STEP_EXPIRED/);
+  assert.throws(() => sample(f, id, { tilt: -15 }), /STEP_EXPIRED/);
   const second = f.create();
   f.advance(1000);
   assert.notEqual(f.create().challengeId, second.challengeId);

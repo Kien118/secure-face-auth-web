@@ -1,8 +1,13 @@
 import { createApp } from './app.js';
 import { readConfig } from './config.js';
+import { FrameAnalyzer } from './services/face-analyzer.js';
+import { EncryptedTemplateStore } from './services/template-store.js';
 
 const config = readConfig();
-const server = createApp(config).listen(config.port, config.host, error => {
+const analyzer = new FrameAnalyzer();
+await analyzer.init(); // load server-side models before accepting requests
+const templateStore = new EncryptedTemplateStore(config.dataDir, { key: process.env.TEMPLATE_KEY });
+const server = createApp({ ...config, analyzer, templateStore }).listen(config.port, config.host, error => {
   if (error) return;
   console.log(`Face authentication PoC: http://${config.host}:${server.address().port}`);
 });

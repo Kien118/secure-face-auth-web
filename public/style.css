@@ -39,6 +39,8 @@ h1 em { font-family:Georgia,'Times New Roman',serif; font-weight:400; color:var(
 .camera-stage { position:relative; isolation:isolate; background:#142a2a; aspect-ratio:16/10; display:grid; place-items:center; overflow:hidden; }
 .camera-stage::before { content:''; position:absolute; inset:0; background:radial-gradient(ellipse at 50% 40%,#244141 0,transparent 70%); pointer-events:none; z-index:-1; }
 video { width:100%; height:100%; object-fit:contain; display:block; position:absolute; inset:0; }
+/* Mirror the preview only (CSS); captured frames sent to the server stay unmirrored. */
+#video { transform:scaleX(-1); }
 .camera-placeholder { display:flex; flex-direction:column; align-items:center; text-align:center; color:#8aa5a1; padding:25px; }
 .camera-placeholder svg { margin-bottom:19px; opacity:.65; }
 .camera-placeholder h3 { color:#e5eeea; font-size:18px; font-weight:400; letter-spacing:-.3px; }
@@ -166,3 +168,7 @@ progress::-moz-progress-bar { background:var(--green); border-radius:8px; }
   .site-footer { flex-direction:column; gap:5px; }
 }
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { transition:none !important; } }
+
+/* Account page (shown after a server-issued session) */
+.account-page { max-width: 640px; margin: 64px auto; padding: 0 16px; }
+.account-page h1 { margin-bottom: 8px; }

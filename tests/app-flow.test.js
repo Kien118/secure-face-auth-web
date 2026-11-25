@@ -30,13 +30,13 @@ test('real app orchestration enforces consent, readiness, cancellation and fresh
   let capture = async () => [face];
   const tracks = []; const requests = [];
   const net = { loadFromUri: async () => {
-    if (++modelLoads === 3) modelStarted.resolve();
+    if (++modelLoads === 1) modelStarted.resolve();
     await modelsReady.promise;
   } };
   const replacements = {
     document: Object.assign(documentEvents, { hidden: false,
       getElementById: id => { assert.ok(nodes[id], `Missing actual page element: ${id}`); return nodes[id]; },
-      createElement: () => ({ getContext: () => ({ drawImage() {} }) }) }),
+      createElement: () => ({ getContext: () => ({ drawImage() {} }), toDataURL: () => 'data:image/jpeg;base64,AAAA' }) }),
     window: windowEvents,
     navigator: { mediaDevices: { getUserMedia: async options => {
       cameraCalls++; assert.equal(options.audio, false);
@@ -46,9 +46,7 @@ test('real app orchestration enforces consent, readiness, cancellation and fresh
       return { getTracks: () => [track], getVideoTracks: () => [track] };
     } } },
     faceapi: { nets: { tinyFaceDetector: net, faceLandmark68TinyNet: net, faceRecognitionNet: net },
-      TinyFaceDetectorOptions: class {}, detectAllFaces: () => ({
-        withFaceLandmarks: () => ({ withFaceDescriptors: () => capture() })
-      }) },
+      TinyFaceDetectorOptions: class {}, detectAllFaces: () => capture() },
     fetch: async (url, options) => {
       requests.push({ url, options });
       if (networkError) throw new TypeError('network unavailable');
@@ -107,7 +105,7 @@ test('real app orchestration enforces consent, readiness, cancellation and fresh
     assert.equal(nodes.status.dataset.code, 'MATCH');
     assert.equal(nodes['metric-distance'].textContent, '0.2142');
     assert.equal(nodes['metrics-panel'].hidden, false);
-    assert.deepEqual(Object.keys(JSON.parse(requests.at(-1).options.body)).sort(), ['accountId', 'descriptor']);
+    assert.deepEqual(Object.keys(JSON.parse(requests.at(-1).options.body)).sort(), ['accountId', 'frame']);
     networkError = true; await nodes.verify.emit('click'); networkError = false;
     assert.equal(nodes.status.dataset.code, 'SERVER_ERROR');
     assert.equal(nodes['metric-distance'].textContent, '—');

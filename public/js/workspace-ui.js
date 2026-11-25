@@ -1,7 +1,7 @@
 const actionLabels = {
-  look_straight: 'Look straight ahead', close_eyes: 'Close your eyes',
-  open_eyes: 'Open your eyes', turn_left: 'Turn toward image left',
-  turn_right: 'Turn toward image right', return_center: 'Return to center'
+  look_straight: 'Look straight ahead', tilt_left: 'Tilt to your right shoulder',
+  tilt_right: 'Tilt to your left shoulder', level_head: 'Straighten your head', turn_left: 'Turn to your right',
+  turn_right: 'Turn to your left', return_center: 'Return to center'
 };
 const statusLabels = {
   TEMPLATE_CREATED: ['success', 'Template created'], MATCH: ['success', 'Identity match'],
@@ -9,7 +9,7 @@ const statusLabels = {
   MODEL_LOADING: ['progress', 'Loading models'], CHALLENGE_ACTIVE: ['progress', 'Follow the prompt'],
   CONSENT_REQUIRED: ['warning', 'Consent required'], NO_FACE: ['warning', 'No face detected'],
   MULTIPLE_FACES: ['warning', 'One face at a time'], CAMERA_STOPPED: ['warning', 'Camera stopped'],
-  CANCELLED: ['warning', 'Attempt cancelled'], SEQUENCE_COMPLETE: ['warning', 'Sequence complete'],
+  CANCELLED: ['warning', 'Attempt cancelled'], SEQUENCE_COMPLETE: ['success', 'Logged in'], LOCKED: ['error', 'Account locked'], FACE_LOST: ['warning', 'Face lost, keep going'],
   READY: ['neutral', 'Ready for a check'], MODEL_READY: ['neutral', 'Models ready'],
   CAMERA_NOT_STARTED: ['neutral', 'Start with consent'], NO_MATCH: ['error', 'No identity match'],
   ACCOUNT_CHANGED: ['neutral', 'Account updated'],
@@ -44,7 +44,7 @@ export class WorkspaceUI {
   }
   renderMetrics(result) {
     for (const [id, key, digits] of [['metric-distance', 'distance', 4], ['metric-threshold', 'threshold', 4],
-      ['metric-ear', 'ear', 3], ['metric-pose', 'noseOffset', 3]]) {
+      ['metric-ear', 'ear', 3], ['metric-pose', 'noseOffset', 3], ['metric-mouth', 'tilt', 1]]) {
       this.$(id).textContent = Number.isFinite(result[key]) ? result[key].toFixed(digits) : '—';
     }
     const hasMetrics = Number.isFinite(result.distance) || Number.isFinite(result.ear);

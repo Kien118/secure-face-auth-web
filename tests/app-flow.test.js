@@ -8,7 +8,7 @@ const deferred = () => {
   return { promise, resolve };
 };
 class Element {
-  constructor() { this.listeners = {}; this.dataset = {}; this.textContent = ''; this.hidden = false; this.disabled = false; }
+  constructor() { this.listeners = {}; this.dataset = {}; this.style = {}; this.textContent = ''; this.hidden = false; this.disabled = false; }
   addEventListener(type, listener) { (this.listeners[type] ??= []).push(listener); }
   async emit(type) {
     if (type === 'click' && this.disabled) return;
@@ -29,14 +29,15 @@ test('real app orchestration enforces consent, readiness, cancellation and fresh
   let modelLoads = 0; let cameraCalls = 0; let networkError = false;
   let capture = async () => [face];
   const tracks = []; const requests = [];
+  const lastPost = () => requests.filter(r => r.options?.method === 'POST').at(-1);
   const net = { loadFromUri: async () => {
-    if (++modelLoads === 3) modelStarted.resolve();
+    if (++modelLoads === 1) modelStarted.resolve();
     await modelsReady.promise;
   } };
   const replacements = {
     document: Object.assign(documentEvents, { hidden: false,
       getElementById: id => { assert.ok(nodes[id], `Missing actual page element: ${id}`); return nodes[id]; },
-      createElement: () => ({ getContext: () => ({ drawImage() {} }) }) }),
+      createElement: () => ({ getContext: () => ({ drawImage() {} }), toDataURL: () => 'data:image/jpeg;base64,AAAA' }) }),
     window: windowEvents,
     navigator: { mediaDevices: { getUserMedia: async options => {
       cameraCalls++; assert.equal(options.audio, false);
@@ -46,9 +47,7 @@ test('real app orchestration enforces consent, readiness, cancellation and fresh
       return { getTracks: () => [track], getVideoTracks: () => [track] };
     } } },
     faceapi: { nets: { tinyFaceDetector: net, faceLandmark68TinyNet: net, faceRecognitionNet: net },
-      TinyFaceDetectorOptions: class {}, detectAllFaces: () => ({
-        withFaceLandmarks: () => ({ withFaceDescriptors: () => capture() })
-      }) },
+      TinyFaceDetectorOptions: class {}, detectAllFaces: () => capture() },
     fetch: async (url, options) => {
       requests.push({ url, options });
       if (networkError) throw new TypeError('network unavailable');
@@ -81,7 +80,17 @@ test('real app orchestration enforces consent, readiness, cancellation and fresh
     for (const action of ['enroll', 'verify', 'challenge']) assert.equal(nodes[action].disabled, true);
     assert.equal(nodes.account.disabled, true);
     modelsReady.resolve(); await starting;
+    // Guided order: only enrollment is available for an account without a template.
+    assert.deepEqual(['enroll', 'verify', 'challenge'].map(id => nodes[id].disabled), [false, true, true]);
+    assert.match(nodes.enroll.className, /button-primary/);
+    await nodes.enroll.emit('click');
+    assert.equal(nodes.status.dataset.code, 'TEMPLATE_CREATED');
+    assert.deepEqual(['enroll', 'verify', 'challenge'].map(id => nodes[id].disabled), [false, false, true]);
+    assert.match(nodes.verify.className, /button-primary/);
+    await nodes.verify.emit('click');
+    assert.equal(nodes.status.dataset.code, 'MATCH');
     for (const action of ['enroll', 'verify', 'challenge']) assert.equal(nodes[action].disabled, false);
+    assert.match(nodes.challenge.className, /button-primary/);
     assert.equal(nodes.video.hidden, false);
     assert.equal(nodes['model-state'].textContent, 'Models ready');
   });
@@ -89,7 +98,7 @@ test('real app orchestration enforces consent, readiness, cancellation and fresh
   await t.test('changing the idle account clears the previous identity result and progress', async () => {
     nodes.account.value = 'alice';
     await nodes.verify.emit('click');
-    assert.equal(JSON.parse(requests.at(-1).options.body).accountId, 'alice');
+    assert.equal(JSON.parse(lastPost().options.body).accountId, 'alice');
     assert.equal(nodes.status.dataset.code, 'MATCH');
     assert.equal(nodes['metrics-panel'].hidden, false);
     nodes.account.value = 'bob'; await nodes.account.emit('input');
@@ -98,8 +107,13 @@ test('real app orchestration enforces consent, readiness, cancellation and fresh
     assert.equal(nodes['metrics-panel'].hidden, true);
     assert.equal(nodes['result-placeholder'].hidden, false);
     assert.equal(nodes['challenge-panel'].dataset.state, 'idle');
-    assert.equal(nodes['challenge-progress'].value, 0);
+    assert.equal(nodes['pose-fill'].style.width, '0%');
     assert.equal(nodes['challenge-step'].textContent, 'Not started');
+    // A new account starts the guided order again at enrollment.
+    assert.deepEqual(['enroll', 'verify', 'challenge'].map(id => nodes[id].disabled), [false, true, true]);
+    assert.match(nodes.enroll.className, /button-primary/);
+    await nodes.enroll.emit('click');
+    assert.equal(nodes.verify.disabled, false);
   });
 
   await t.test('a network failure clears the previous successful match and its measurements', async () => {
@@ -107,7 +121,7 @@ test('real app orchestration enforces consent, readiness, cancellation and fresh
     assert.equal(nodes.status.dataset.code, 'MATCH');
     assert.equal(nodes['metric-distance'].textContent, '0.2142');
     assert.equal(nodes['metrics-panel'].hidden, false);
-    assert.deepEqual(Object.keys(JSON.parse(requests.at(-1).options.body)).sort(), ['accountId', 'descriptor']);
+    assert.deepEqual(Object.keys(JSON.parse(lastPost().options.body)).sort(), ['accountId', 'frame']);
     networkError = true; await nodes.verify.emit('click'); networkError = false;
     assert.equal(nodes.status.dataset.code, 'SERVER_ERROR');
     assert.equal(nodes['metric-distance'].textContent, '—');

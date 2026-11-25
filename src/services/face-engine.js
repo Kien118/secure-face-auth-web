@@ -28,8 +28,10 @@ export function validatePayload(body) {
 }
 
 export class FaceEngine {
-  #templates = new Map();
-  constructor(threshold = 0.6, maxTemplates = 100) {
+  #templates;
+  // store: any Map-like object (has/get/set/delete/size); RAM by default, EncryptedTemplateStore on the real server.
+  constructor(threshold = 0.6, maxTemplates = 100, store = new Map()) {
+    this.#templates = store;
     if (!Number.isFinite(threshold) || threshold <= 0 || threshold > 2) throw new Error('Invalid threshold');
     this.threshold = threshold;
     this.maxTemplates = maxTemplates;
@@ -39,9 +41,10 @@ export class FaceEngine {
     if (this.#templates.has(accountId)) throw new InputError('TEMPLATE_EXISTS', 409);
     if (this.#templates.size >= this.maxTemplates) throw new InputError('TEMPLATE_CAPACITY', 503);
     this.#templates.set(accountId, descriptor);
-    return { status: 'TEMPLATE_CREATED', temporary: true };
+    return { status: 'TEMPLATE_CREATED', temporary: this.#templates instanceof Map };
   }
   hasTemplate(accountId) { return this.#templates.has(accountId); }
+  removeTemplate(accountId) { return this.#templates.delete(validateAccountId(accountId)); }
   verify(body) {
     const { accountId, descriptor } = validatePayload(body);
     const reference = this.#templates.get(accountId);

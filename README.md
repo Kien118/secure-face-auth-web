@@ -3,8 +3,10 @@
 Day 1 (November 5, 2026): webcam-based 1:1 identity matching baseline.
 Day 2 (implemented November 12, 2026): an eye-closure and head-turn challenge PoC.
 Day 3 (November 12–13, 2026): randomized actions, one-time sample tokens, and a redesigned workspace.
-**Spoofing resistance has not been verified. No authenticated session is issued.
-Do not use this PoC in production.**
+Day 4 (November 24, 2026): server-measured evidence (JPEG frames), login sessions, encrypted
+persistent templates, per-account lockout, and an account page.
+**Phone-photo trials have not been recorded yet. This is challenge-response, not certified PAD.
+Do not use this prototype in production.**
 
 ## Final project requirements
 
@@ -25,13 +27,23 @@ and Node.js/Express in a hybrid architecture. The initial workspace contained an
 empty Git repository on `main`, research materials, and no existing application,
 README, AGENTS.md, or project rules to reuse.
 
-Browser: consent → webcam → transient frame → Tiny Face Detector → tiny 68-point
-landmarks → 128-dimensional descriptor → same-origin POST. Baseline buttons process
-one frame; an explicitly started challenge sends selected descriptor/landmark
-samples for up to 45 seconds. Images and video are not uploaded.
+Browser: consent → webcam → transient frame → Tiny Face Detector (exactly-one-face
+gate for fast feedback only) → JPEG frame → same-origin POST. Enrollment sends 3
+frames, the baseline sends 1, and the challenge sends one frame per sample.
+The browser computes no descriptor or landmarks, so editing client JavaScript cannot forge evidence.
 
-Server: strict validation → account-bound template in a RAM Map → Euclidean
-distance → `distance <= threshold`. It compares only the claimed account (1:1),
+Server: decode JPEG → `@vladmandic/face-api` on the TF.js WASM backend
+(`src/services/face-analyzer.js`) runs SSD MobileNet v1 + the full 68-point landmark net,
+which keep tracking turned and tilted faces that the browser's tiny models lose, plus the
+pinned recognition net (byte-identical to the browser copy, so stored templates stay valid). During a challenge the browser sends frames even when its tiny
+detector misses the face; the server decides (about 0.3–0.5 s per frame on a laptop CPU).
+Turn and tilt thresholds were set with the tiny landmarks and should be re-checked.
+Server output: descriptor + 68 landmarks → strict validation → account-bound template → Euclidean
+distance → `distance <= threshold`. Frames are processed in memory and discarded.
+Templates are stored in `data/templates.json`, each sealed with AES-256-GCM using the
+account ID as associated data (`src/services/template-store.js`). A completed challenge
+creates a server-side session (`sid` cookie, HttpOnly, SameSite=Strict); the
+identity-only baseline never does. It compares only the claimed account (1:1),
 checks the challenge sequence, and ignores client-provided success claims.
 Express serves both the static frontend and API. No frontend bundler is required.
 
@@ -98,8 +110,9 @@ Experimental hardware calibration settings are provided in `.env.example`:
 | `LIVENESS_TIMEOUT_MS` | 45000 | Overall challenge lifetime, using server time |
 | `LIVENESS_STEP_TIMEOUT_MS` | 15000 | Per-step lifetime, bounded by the overall deadline |
 | `LIVENESS_EYE_OPEN` | 0.25 | Minimum eye aspect ratio (EAR) for open eyes |
-| `LIVENESS_EYE_CLOSED` | 0.18 | Maximum EAR for closed eyes |
-| `LIVENESS_HEAD_TURN` | 0.20 | Required nose offset relative to the initial neutral pose |
+| `LIVENESS_HEAD_TILT_DEG` | 12 | Required head tilt (eye-line roll, degrees) relative to the user's own neutral pose |
+| `LIVENESS_HEAD_LEVEL_DEG` | 6 | Maximum roll for "straighten your head" and for a stable neutral baseline |
+| `LIVENESS_HEAD_TURN` | 0.15 | Required nose offset relative to the initial neutral pose (a slight turn) |
 | `LIVENESS_HEAD_CENTER` | 0.10 | Neutral-pose tolerance |
 
 EAR averages the eyelid-distance/eye-width ratio for both eyes. Nose displacement
@@ -139,15 +152,41 @@ account is not displayed beside another account's identifier.
 If port 3000 is already in use, open the running app if it is yours, or run
 `$env:PORT = '3001'; npm start` in PowerShell and open [localhost:3001](http://localhost:3001).
 
-Every challenge starts with a neutral, open-eyed pose. The server then randomizes
-the order of two blocks: close/open eyes, and turn/return to center. Turn direction
-is also chosen by the server. Follow each displayed prompt rather than memorizing
-a previous attempt. The preview is not mirrored; left/right means the direction
-of the nose in the preview, not anatomical left/right.
+Every challenge starts with a neutral pose (eyes open); its nose offset and eye-line angle become
+the user's own baseline. The server then draws 5–6 further actions from five poses (6–7 steps in total)
+(center, turn left/right, tilt left/right). Each action may be any pose except the previous one,
+so there is no fixed "act, then return" rhythm (a turn can go straight into a tilt). Each action
+must be held for a random 2 or 3 consecutive samples, which the server never reveals.
+That gives 4⁵ + 4⁶ = 5,120 action sequences (before hold timing), against 8 in Day 4's
+first version. Follow each displayed prompt rather than memorizing a previous attempt.
 
-The browser announces **Open your eyes** when the reopening action begins, if
-speech is supported. If no speech is audible, close your eyes for about two seconds,
-then reopen to inspect progress and repeat if necessary. Timing needs device calibration.
+Every sample response also carries `checks`: the requirements of the action just evaluated, each as
+`{label, value, op, target, pass}` (identity distance, eyes open, turn and tilt). The step advances
+only when all of them pass for the hidden number of consecutive samples. The workspace shows them as
+`value / op target`, with the value green when met and red when not, which also gives
+per-sample evidence for the report.
+
+Identity retry: the first identity mismatch in an attempt (often caused by a strong head pose) pauses
+the attempt instead of ending it. The response is `IDENTITY_RETRY`; the page stops sampling and shows
+"Retry this step". `POST /api/liveness/challenges/:id/resume` with the current `sampleToken` reopens the
+same step (hold count reset) with a fresh step deadline, still capped by the attempt deadline. Samples
+sent while paused end the attempt; a second mismatch ends it and counts towards the account lockout.
+
+Speed (Day 5): the server runs the tiny detector first and SSD MobileNet only when it finds no face
+(about 150 ms instead of 450 ms per frontal frame on the development laptop); challenge frames are
+downscaled to 480 px and skip the browser-side detector; the next sample is sent as soon as the
+previous answer arrives plus 300 ms (the server needs at least 150 ms between analysed samples). Each response reports `serverMs`, the browser adds the
+round trip, and both appear next to the requirements. Limits are now 20 s per step and 90 s per attempt. The preview is mirrored (CSS only; frames sent to the server are not),
+and prompts use the user's own left/right. Action names keep raw-image coordinates:
+`turn_left` (nose toward image left) is shown as "Turn to your right".
+
+Day 4 replaced the close/open-eyes block with a head tilt: with eyes closed a user cannot
+read the next prompt, which forced a spoken cue. Mouth-open and smile were tried and dropped:
+the tiny face models lost the face or its identity match on strong expressions, while a tilt
+keeps a neutral expression. The eyes now stay open for the whole attempt,
+so the speech cue was removed. If a frame has no face (for example a turn that goes too far),
+it is skipped: the token does not rotate, the step deadline keeps running, and the attempt
+continues. Multiple faces still end the attempt. Tilt and turn thresholds are uncalibrated.
 
 Wrong identity, no face, multiple faces, cancellation, or expiry ends the attempt.
 Start a new attempt after an error. `SEQUENCE_COMPLETE` only means the submitted
@@ -163,12 +202,15 @@ Existing templates cannot be freely overwritten; restart to reset the experiment
 
 | Endpoint | Input / result |
 |---|---|
-| GET `/api/health` | status ok, identity-and-challenge-poc, challengePoc true, liveness false |
-| POST `/api/templates` | `{accountId, descriptor}` → 201 TEMPLATE_CREATED |
-| POST `/api/verify` | Same schema → MATCH/NO_MATCH, distance, threshold, authenticated false |
-| POST `/api/liveness/challenges` | `{accountId}` with a template → challengeId, current action/prompt, sampleToken, step, deadlines |
-| POST `/api/liveness/challenges/:id/samples` | `{descriptor, landmarks, sampleToken}` → progress/new token or SEQUENCE_COMPLETE/NO_MATCH |
+| GET `/api/health` | status ok, server-evidence-challenge, pad false, sessions true |
+| POST `/api/templates` | `{accountId, frames: [3–5 JPEG data URLs]}` → 201 TEMPLATE_CREATED (frames must show one consistent face) |
+| POST `/api/verify` | `{accountId, frame}` → MATCH/NO_MATCH, distance, threshold, authenticated false (baseline only) |
+| POST `/api/liveness/challenges` | `{accountId}` with a template → challengeId, current action/prompt, sampleToken, step, deadlines; 429 LOCKED after 5 failures |
+| POST `/api/liveness/challenges/:id/samples` | `{frame, sampleToken}` → progress/new token, NO_MATCH, or SEQUENCE_COMPLETE + `Set-Cookie: sid` + authenticated true |
 | DELETE `/api/liveness/challenges/:id` | Cancel, returning 204; consumed IDs cannot advance again |
+| GET `/api/session` | 200 with accountId for a valid session cookie, else 401 |
+| POST `/api/logout` | Destroys the session |
+| DELETE `/api/templates/me` | Logged-in owner deletes their template (erasure) and all their sessions |
 
 Baseline requests accept exactly two fields. A challenge sample requires a
 128-number descriptor, exactly 68 finite coordinate pairs in [0,1], and the
@@ -189,7 +231,7 @@ neutral-pose measurements are retained.
 
 Descriptor values must be finite numbers with absolute value <=10 to reject
 extreme numeric input; this is not a biometric quality gate. JSON is limited to
-8 KiB. Missing templates return 404, duplicate templates 409, and template capacity
+8 KiB, except the three frame routes (1 MB). Missing templates return 404, duplicate templates 409, and template capacity
 (100 per instance) 503. Invalid JSON returns 400, wrong content type 415, and
 oversized bodies 413. API query strings and cross-site POSTs indicated by
 Sec-Fetch-Site are rejected. CORS is not enabled. These are not production login APIs.
@@ -212,15 +254,18 @@ The implementation uses CSP/security headers, no-store responses, strict
 validation, and server-owned matching/sequence decisions. Git excludes secrets,
 real biometric captures, and model weights; tests use synthetic inputs.
 
-Client-controlled descriptors and landmarks can be forged or reused with fresh
-tokens. Token binding rejects unchanged old requests; it does **not** establish
-fresh or genuine camera input. There are only four order/direction plans, so
-suitable prerecorded or adaptive video can still match a plan. Moving or tilting
+Descriptors and landmarks are now measured by the server from submitted frames, so a
+modified client can no longer send made-up numbers. It can still send frames that do not
+come from a real camera (a virtual camera or a recorded video): token binding rejects
+unchanged old requests but does **not** establish fresh or genuine camera input. With 5,120 sequences and hidden hold counts a
+prerecorded clip is unlikely to match, but an attacker who records many poses and switches
+clips live (or a real-time deepfake) can still follow the prompts. Moving or tilting
 a display can also affect pose estimates. Physical trials are required.
 
-Trusted enrollment, independent PAD/evidence verification, authenticated accounts,
-sessions, rate limiting, encrypted persistent templates, and PAD certification
-are not implemented. A bounded Map does not replace authorization or rate limiting.
+Trusted enrollment (binding a face to an already-verified account), passive PAD,
+and PAD certification are not implemented. Sessions and the lockout counter live in
+memory and reset on restart. The template key is a local file (`data/template.key`)
+unless `TEMPLATE_KEY` is set; keep `data/` out of Git and backups you share.
 The face-api.js/TF.js stack is old; a clean dependency audit is not a security guarantee.
 
 This snapshot includes Day 3's randomized challenge, one-time tokens, step deadlines,

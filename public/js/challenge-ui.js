@@ -1,6 +1,9 @@
-import { captureFace } from './face-client.js';
+import { captureFrame } from './face-client.js';
 
-let activeCue;
+const FACE_LOST = new Set(['NO_FACE', 'FACE_TOO_SMALL']);
+// Counted from the previous answer, not from sending: the server spaces samples by when it finished
+// analysing them (minimum 150 ms), and a fast frontal frame can finish soon after a slow turned one.
+const MIN_GAP_MS = 300;
 
 export async function postJson(path, body, signal) {
   const timeout = AbortSignal.timeout(10000);
@@ -13,52 +16,57 @@ export async function postJson(path, body, signal) {
   return result;
 }
 
-export async function runChallenge({ video, accountId, signal, onUpdate }) {
+// waitForRetry(signal): resolves when the user presses "Retry this step" after a first identity mismatch.
+export async function runChallenge({ video, accountId, signal, onUpdate, waitForRetry }) {
   let challengeId;
-  let cue;
-  const cancelCue = () => {
-    if (!cue || activeCue !== cue) return;
-    activeCue = undefined;
-    try { globalThis.speechSynthesis?.cancel(); } catch { /* Keep cancellation working if speech fails. */ }
-  };
-  signal.addEventListener('abort', cancelCue, { once: true });
   try {
     const challenge = await postJson('/api/liveness/challenges', { accountId }, signal);
     challengeId = challenge.challengeId;
     signal.throwIfAborted();
     onUpdate(challenge);
     let state = challenge;
-    let previousAction = challenge.action;
     const checkActive = () => {
       signal.throwIfAborted();
       if (Date.now() >= challenge.expiresAt) throw Object.assign(new Error(), { code: 'CHALLENGE_EXPIRED' });
       if (Date.now() >= state.stepExpiresAt) throw Object.assign(new Error(), { code: 'STEP_EXPIRED' });
     };
+    let lastAnswer = 0;
     while (true) {
-      await new Promise(resolve => setTimeout(resolve, 250));
+      const wait = lastAnswer + MIN_GAP_MS - Date.now();
+      if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
       checkActive();
-      const sample = await captureFace(video);
-      checkActive();
-      const result = await postJson(`/api/liveness/challenges/${challengeId}/samples`, {
-        ...sample, sampleToken: state.sampleToken
-      }, signal);
-      signal.throwIfAborted();
-      if (result.action === 'open_eyes' && previousAction !== 'open_eyes' && globalThis.speechSynthesis && globalThis.SpeechSynthesisUtterance) {
-        try {
-          cue = new SpeechSynthesisUtterance('Open your eyes and look straight ahead.');
-          cue.lang = 'en-US';
-          activeCue = cue;
-          speechSynthesis.speak(cue);
-        } catch { /* The visible prompt remains available when speech is unsupported. */ }
+      let result;
+      const started = Date.now();
+      try {
+        const frame = await captureFrame(video, undefined, { detect: false });
+        checkActive();
+        result = await postJson(`/api/liveness/challenges/${challengeId}/samples`, {
+          frame, sampleToken: state.sampleToken
+        }, signal);
+        lastAnswer = Date.now();
+        result = { ...result, roundTripMs: lastAnswer - started };
+      } catch (error) {
+        // Face lost (too far a turn, out of frame): skip this frame and keep the attempt and token.
+        if (!FACE_LOST.has(error.code)) throw error;
+        lastAnswer = Date.now();
+        signal.throwIfAborted();
+        onUpdate({ ...state, faceLost: true });
+        continue;
       }
-      previousAction = result.action;
+      signal.throwIfAborted();
       state = result;
       onUpdate(result);
+      if (result.status === 'IDENTITY_RETRY' && waitForRetry) {
+        await waitForRetry(signal); // sampling stays stopped while the server holds the attempt paused
+        state = await postJson(`/api/liveness/challenges/${challengeId}/resume`, { sampleToken: state.sampleToken }, signal);
+        signal.throwIfAborted();
+        onUpdate(state);
+        lastAnswer = Date.now();
+        continue;
+      }
       if (result.status !== 'CHALLENGE_ACTIVE') return result;
     }
   } finally {
-    signal.removeEventListener('abort', cancelCue);
-    cancelCue();
     if (challengeId) {
       // Cancel also clears server state after local detection or transport errors.
       await fetch(`/api/liveness/challenges/${challengeId}`, {

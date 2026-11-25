@@ -3,13 +3,28 @@ import { InputError, validateAccountId } from './face-engine.js';
 
 const prompts = {
   look_straight: 'Look straight ahead and keep your eyes open.',
-  close_eyes: 'Look straight ahead. Close your eyes and hold until asked to reopen them.',
-  open_eyes: 'Open your eyes and look straight ahead.',
-  turn_left: 'Keep your eyes open. Turn your head so your nose moves left in the preview.',
-  turn_right: 'Keep your eyes open. Turn your head so your nose moves right in the preview.',
-  return_center: 'Keep your eyes open and return your head to the center.'
+  // tilt_left/tilt_right follow the same raw-image convention as the turns: tilt_left moves the top of
+  // the head toward image left, which is the user's own right shoulder.
+  tilt_left: 'Face the screen directly (do not turn), then tilt your head toward your right shoulder.',
+  tilt_right: 'Face the screen directly (do not turn), then tilt your head toward your left shoulder.',
+  // turn_left/turn_right name the nose direction in the raw (unmirrored) camera image, which is
+  // opposite to the user's own side: turning to your right moves the nose toward image left.
+  turn_left: 'Keep your head upright (no tilt) and turn your face slightly to your right.',
+  turn_right: 'Keep your head upright (no tilt) and turn your face slightly to your left.',
+  center: 'Face the screen directly with your head upright.'
 };
+// Target pose per action as [yaw, roll]: -1/1 = required direction, 0 = neutral.
+const POSES = { center: [0, 0], turn_left: [-1, 0], turn_right: [1, 0], tilt_left: [0, -1], tilt_right: [0, 1] };
+const MIN_STEPS = 5; // random 5..6 actions after look_straight: 6-7 steps in total
+const STEP_CHOICES = 2;
+const MIN_HOLD = 2; // random 2..3 consecutive samples per action, never sent to the client
+const HOLD_CHOICES = 2;
 const sampleToken = () => randomBytes(32).toString('hex');
+const tokenMatches = (challenge, token) => typeof token === 'string' && /^[a-f0-9]{64}$/.test(token) &&
+  timingSafeEqual(Buffer.from(token, 'hex'), Buffer.from(challenge.sampleToken, 'hex'));
+const OPS = { '≥': (a, b) => a >= b, '≤': (a, b) => a <= b, '<': (a, b) => a < b };
+// One requirement of the evaluated action: shown to the user as "value / op target", pass or fail.
+const check = (label, value, op, target) => ({ label, value, op, target, pass: OPS[op](value, target) });
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
 export function measureLandmarks(points) {
@@ -34,18 +49,20 @@ export function measureLandmarks(points) {
   const midpoint = [(centers[0][0] + centers[1][0]) / 2, (centers[0][1] + centers[1][1]) / 2];
   const noseOffset = ((points[30][0] - midpoint[0]) * axis[0] +
     (points[30][1] - midpoint[1]) * axis[1]) / axisSquared;
-  return { ear: (ratios[0] + ratios[1]) / 2, noseOffset };
+  // Head roll: angle of the eye line in degrees. Negative = image-left eye lower = top of head toward image left.
+  const roll = Math.atan2(axis[1], axis[0]) * 180 / Math.PI;
+  return { ear: (ratios[0] + ratios[1]) / 2, noseOffset, roll };
 }
 
 export class LivenessChallenges {
   #challenges = new Map();
-  constructor(engine, { now = Date.now, random = randomInt, timeoutMs = 45000, stepTimeoutMs = 15000, maxChallenges = 100,
-    eyeOpen = 0.25, eyeClosed = 0.18, headTurn = 0.20, headCenter = 0.10 } = {}) {
+  constructor(engine, { now = Date.now, random = randomInt, timeoutMs = 90000, stepTimeoutMs = 20000, maxChallenges = 100,
+    eyeOpen = 0.25, headTurn = 0.15, headCenter = 0.10, headTiltDeg = 12, headLevelDeg = 6, limiter = null } = {}) {
     if (typeof now !== 'function' || typeof random !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs <= 0 ||
         !Number.isInteger(stepTimeoutMs) || stepTimeoutMs <= 0 ||
         !Number.isInteger(maxChallenges) || maxChallenges <= 0 ||
-        ![eyeOpen, eyeClosed, headTurn, headCenter].every(Number.isFinite) ||
-        eyeClosed <= 0 || eyeClosed >= eyeOpen || eyeOpen >= 1 ||
+        ![eyeOpen, headTurn, headCenter, headTiltDeg, headLevelDeg].every(Number.isFinite) ||
+        eyeOpen <= 0 || eyeOpen >= 1 || headLevelDeg <= 0 || headLevelDeg >= headTiltDeg || headTiltDeg >= 45 ||
         headCenter < 0 || headCenter >= headTurn || headTurn >= 1) {
       throw new Error('Invalid liveness configuration');
     }
@@ -56,29 +73,44 @@ export class LivenessChallenges {
     this.stepTimeoutMs = stepTimeoutMs;
     this.maxChallenges = maxChallenges;
     this.eyeOpen = eyeOpen;
-    this.eyeClosed = eyeClosed;
+    this.headTiltDeg = headTiltDeg;
+    this.headLevelDeg = headLevelDeg;
     this.headTurn = headTurn;
     this.headCenter = headCenter;
+    this.limiter = limiter;
   }
+  accountOf(id) { return this.#challenges.get(id)?.accountId; }
   create(body) {
     if (!body || typeof body !== 'object' || Array.isArray(body) ||
         Object.keys(body).join(',') !== 'accountId') throw new InputError('INVALID_PAYLOAD');
     const accountId = validateAccountId(body.accountId);
     if (!this.engine.hasTemplate(accountId)) throw new InputError('NO_TEMPLATE', 404);
+    if (this.limiter?.locked(accountId)) throw new InputError('LOCKED', 429);
     const now = this.now();
     for (const [id, challenge] of this.#challenges) {
-      if (now >= challenge.stepExpiresAt) this.#challenges.delete(id);
+      // A paused attempt has no running step deadline; only its overall deadline applies.
+      if (now >= (challenge.paused ? challenge.expiresAt : challenge.stepExpiresAt)) this.#challenges.delete(id);
     }
     if (this.#challenges.size >= this.maxChallenges) throw new InputError('CHALLENGE_CAPACITY', 503);
-    const order = this.random(2);
-    const direction = this.random(2);
-    if (![order, direction].every(value => value === 0 || value === 1)) throw new Error('Invalid liveness random source');
-    const blink = ['close_eyes', 'open_eyes'];
-    const turn = [direction === 0 ? 'turn_left' : 'turn_right', 'return_center'];
-    const plan = ['look_straight', ...(order === 0 ? [...blink, ...turn] : [...turn, ...blink])];
+    const pick = max => {
+      const value = this.random(max);
+      if (!Number.isInteger(value) || value < 0 || value >= max) throw new Error('Invalid liveness random source');
+      return value;
+    };
+    // Any pose may follow any other (no fixed "act then return" rhythm), with random length and hold
+    // counts, so a video recorded from earlier attempts is unlikely to match a new plan or its timing.
+    const plan = ['look_straight'];
+    const holds = [2];
+    for (let steps = MIN_STEPS + pick(STEP_CHOICES); steps > 0; steps--) {
+      const previous = plan.at(-1) === 'look_straight' ? 'center' : plan.at(-1);
+      const options = Object.keys(POSES).filter(pose => pose !== previous);
+      plan.push(options[pick(options.length)]);
+      holds.push(MIN_HOLD + pick(HOLD_CHOICES));
+    }
     const challengeId = randomUUID();
     const challenge = { accountId, step: 0, consecutive: 0, lastSampleAt: null, neutralOffset: 0, neutralOffsetSum: 0,
-      plan, sampleToken: sampleToken(), expiresAt: now + this.timeoutMs,
+      neutralRoll: 0, neutralRollSum: 0, retryUsed: false, paused: false,
+      plan, holds, sampleToken: sampleToken(), expiresAt: now + this.timeoutMs,
       stepExpiresAt: now + Math.min(this.timeoutMs, this.stepTimeoutMs) };
     this.#challenges.set(challengeId, challenge);
     return { challengeId, ...this.#response(challenge) };
@@ -91,8 +123,9 @@ export class LivenessChallenges {
       prompt: prompts[action] ?? 'PoC challenge sequence completed.',
       expiresAt: challenge.expiresAt, stepExpiresAt: challenge.stepExpiresAt, sequencePassed: complete,
       ...(!complete && { sampleToken: challenge.sampleToken }),
-      // shortcut: client landmarks remain untrusted until independent PAD/evidence verification is implemented.
-      liveness: 'UNVERIFIED_CLIENT_EVIDENCE', authenticated: false };
+      // Evidence is measured by the server from submitted frames. This is challenge-response only, not PAD:
+      // a responsive video or deepfake can still perform the actions.
+      liveness: 'SERVER_MEASURED_CHALLENGE', authenticated: false };
   }
   submit(id, body) {
     const challenge = this.#challenges.get(id);
@@ -100,45 +133,100 @@ export class LivenessChallenges {
     try {
       const now = this.now();
       if (now >= challenge.expiresAt) throw new InputError('CHALLENGE_EXPIRED', 410);
+      if (challenge.paused) throw new InputError('CHALLENGE_PAUSED', 409); // samples only after resume()
       if (now >= challenge.stepExpiresAt) throw new InputError('STEP_EXPIRED', 410);
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new InputError('INVALID_PAYLOAD');
-      if (typeof body.sampleToken !== 'string' || !/^[a-f0-9]{64}$/.test(body.sampleToken) ||
-          !timingSafeEqual(Buffer.from(body.sampleToken, 'hex'), Buffer.from(challenge.sampleToken, 'hex'))) {
-        throw new InputError('INVALID_SAMPLE_TOKEN');
-      }
+      if (!tokenMatches(challenge, body.sampleToken)) throw new InputError('INVALID_SAMPLE_TOKEN');
       if (Object.keys(body).sort().join(',') !== 'descriptor,landmarks,sampleToken') throw new InputError('INVALID_PAYLOAD');
       if (challenge.lastSampleAt !== null && now - challenge.lastSampleAt < 150) {
         throw new InputError('SAMPLE_TOO_FAST');
       }
       const identity = this.engine.verify({ accountId: challenge.accountId, descriptor: body.descriptor });
       const metrics = measureLandmarks(body.landmarks);
+      const identityCheck = check('Identity distance', identity.distance, '≤', identity.threshold);
+      if (!identity.matched && !challenge.retryUsed) {
+        // First mismatch in this attempt (often a strong head pose): pause instead of failing. The user
+        // resumes the same step once; a second mismatch ends the attempt and counts as a failure.
+        Object.assign(challenge, { retryUsed: true, paused: true, consecutive: 0, lastSampleAt: now,
+          neutralOffsetSum: 0, neutralRollSum: 0, sampleToken: sampleToken() });
+        return { ...this.#response(challenge), ...identity, status: 'IDENTITY_RETRY', retryAvailable: true,
+          liveness: 'NOT_EVALUATED', authenticated: false, checksFor: challenge.plan[challenge.step], checks: [identityCheck] };
+      }
       if (!identity.matched) {
         this.#challenges.delete(id);
-        return { ...identity, status: 'NO_MATCH', sequencePassed: false, liveness: 'NOT_EVALUATED', authenticated: false };
+        this.limiter?.fail(challenge.accountId);
+        return { ...identity, status: 'NO_MATCH', sequencePassed: false, liveness: 'NOT_EVALUATED', authenticated: false,
+          checksFor: challenge.plan[challenge.step], checks: [identityCheck] };
       }
       const offset = metrics.noseOffset - challenge.neutralOffset;
-      const centered = Math.abs(offset) <= this.headCenter;
-      const eyesOpen = metrics.ear >= this.eyeOpen;
       const action = challenge.plan[challenge.step];
-      const followsStep = action === 'close_eyes' ? centered && metrics.ear <= this.eyeClosed
-        : action === 'turn_left' ? eyesOpen && offset <= -this.headTurn
-          : action === 'turn_right' ? eyesOpen && offset >= this.headTurn : centered && eyesOpen;
+      // Tilt is measured against this person's own neutral head roll from step 0.
+      const tilt = metrics.roll - challenge.neutralRoll;
+      const [yaw, roll] = POSES[action] ?? POSES.center;
+      // A neutral axis must be strictly neutral only in the full center pose; while turning or tilting,
+      // the other axis just must not be in a required pose itself. Directed values (yaw * offset,
+      // roll * tilt) are positive when moving the requested way.
+      const checks = [identityCheck, check('Eyes open (EAR)', metrics.ear, '≥', this.eyeOpen),
+        yaw ? check('Turn (nose offset)', yaw * offset, '≥', this.headTurn)
+          : roll ? check('Turn, keep below (|nose offset|)', Math.abs(offset), '<', this.headTurn)
+            : check('Centered (|nose offset|)', Math.abs(offset), '≤', this.headCenter)];
+      // look_straight measures the baseline roll itself, so it has no tilt requirement.
+      if (action !== 'look_straight') {
+        checks.push(roll ? check('Head tilt (°)', roll * tilt, '≥', this.headTiltDeg)
+          : yaw ? check('Tilt, keep below (|°|)', Math.abs(tilt), '<', this.headTiltDeg)
+            : check('Head level (|°|)', Math.abs(tilt), '≤', this.headLevelDeg));
+      }
+      const followsStep = checks.every(item => item.pass);
       challenge.lastSampleAt = now;
+      // The neutral baseline needs two samples with a stable head roll; an unstable pair restarts from this sample.
+      if (challenge.step === 0 && followsStep && challenge.consecutive === 1 &&
+          Math.abs(metrics.roll - challenge.neutralRollSum) > this.headLevelDeg) {
+        challenge.consecutive = 0;
+        challenge.neutralOffsetSum = 0;
+        challenge.neutralRollSum = 0;
+      }
       challenge.consecutive = followsStep ? challenge.consecutive + 1 : 0;
       if (challenge.step === 0) {
         challenge.neutralOffsetSum = followsStep ? challenge.neutralOffsetSum + metrics.noseOffset : 0;
-        if (challenge.consecutive === 2) challenge.neutralOffset = challenge.neutralOffsetSum / 2;
+        challenge.neutralRollSum = followsStep ? challenge.neutralRollSum + metrics.roll : 0;
+        if (challenge.consecutive === 2) {
+          challenge.neutralOffset = challenge.neutralOffsetSum / 2;
+          challenge.neutralRoll = challenge.neutralRollSum / 2;
+        }
       }
-      if (challenge.consecutive === 2) {
+      if (challenge.consecutive === challenge.holds[challenge.step]) {
         challenge.step++;
         challenge.consecutive = 0;
         challenge.stepExpiresAt = Math.min(now + this.stepTimeoutMs, challenge.expiresAt);
       }
-      if (challenge.step === challenge.plan.length) this.#challenges.delete(id);
+      if (challenge.step === challenge.plan.length) { this.#challenges.delete(id); this.limiter?.reset(challenge.accountId); }
       else challenge.sampleToken = sampleToken();
-      return { ...this.#response(challenge), ...metrics, distance: identity.distance, threshold: identity.threshold };
+      return { ...this.#response(challenge), checksFor: action, checks, ear: metrics.ear, noseOffset: metrics.noseOffset, tilt,
+        distance: identity.distance, threshold: identity.threshold };
     } catch (error) {
       this.#challenges.delete(id);
+      this.limiter?.fail(challenge.accountId);
+      throw error;
+    }
+  }
+  // Resumes a paused attempt at the same step with a fresh step deadline (still capped by the overall one).
+  resume(id, body) {
+    const challenge = this.#challenges.get(id);
+    if (!challenge) throw new InputError('CHALLENGE_NOT_FOUND', 404);
+    try {
+      const now = this.now();
+      if (now >= challenge.expiresAt) throw new InputError('CHALLENGE_EXPIRED', 410);
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).join(',') !== 'sampleToken') {
+        throw new InputError('INVALID_PAYLOAD');
+      }
+      if (!tokenMatches(challenge, body.sampleToken)) throw new InputError('INVALID_SAMPLE_TOKEN');
+      if (!challenge.paused) throw new InputError('NOT_PAUSED', 409);
+      Object.assign(challenge, { paused: false, sampleToken: sampleToken(),
+        stepExpiresAt: Math.min(now + this.stepTimeoutMs, challenge.expiresAt) });
+      return this.#response(challenge);
+    } catch (error) {
+      this.#challenges.delete(id);
+      this.limiter?.fail(challenge.accountId);
       throw error;
     }
   }

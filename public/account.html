@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FaceLab — Account</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/js/account.js"></script>
+</head>
+<body>
+  <main class="account-page">
+    <h1 id="welcome">Checking your session…</h1>
+    <p id="session-info" class="privacy-note">This page is served to everyone, but its data comes from <code>/api/session</code>,
+      which answers only for a valid server-issued session cookie (HttpOnly, SameSite=Strict).</p>
+    <div class="action-buttons">
+      <button id="logout" type="button" class="button button-primary" disabled>Log out</button>
+      <button id="delete" type="button" class="button button-outline" disabled>Delete my face template</button>
+    </div>
+    <p id="account-status" class="privacy-note" role="status"></p>
+  </main>
+</body>
+</html>

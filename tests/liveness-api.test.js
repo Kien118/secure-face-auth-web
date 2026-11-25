@@ -1,13 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../src/app.js';
+import { AttemptLimiter } from '../src/services/sessions.js';
+import { syntheticAnalyzer, syntheticFrame } from './synthetic-analyzer.js';
 
 const descriptor = (value = 0) => Array(128).fill(value);
 
 // Synthetic geometry only; no recorded landmarks or real biometric data.
-function landmarks({ closed = false, turned = false } = {}) {
+function tiltPoints(points, degrees) {
+  const a = degrees * Math.PI / 180; // rotate about the image center; negative = image-left eye lower
+  return points.map(([x, y]) => [0.5 + (x - 0.5) * Math.cos(a) - (y - 0.5) * Math.sin(a),
+    0.5 + (x - 0.5) * Math.sin(a) + (y - 0.5) * Math.cos(a)]);
+}
+
+function landmarks({ tilted = false, turned = false } = {}) {
   const points = Array.from({ length: 68 }, () => [0.5, 0.6]);
-  const halfHeight = closed ? 0.005 : 0.015;
+  const halfHeight = 0.015;
   for (const [index, center] of [[36, 0.35], [42, 0.65]]) {
     const eye = [[center - 0.05, 0.4], [center - 0.025, 0.4 - halfHeight],
       [center + 0.025, 0.4 - halfHeight], [center + 0.05, 0.4],
@@ -15,19 +23,22 @@ function landmarks({ closed = false, turned = false } = {}) {
     eye.forEach((point, offset) => { points[index + offset] = point; });
   }
   points[30] = [turned ? 0.425 : 0.5, 0.5];
-  return points;
+  return tilted ? tiltPoints(points, -15) : points; // -15°: top of head toward image left (tilt_left)
 }
 
-async function fixture(t, options = {}) {
+async function fixture(t, options = {}, { limiter = new AttemptLimiter({ maxFailures: 1000 }) } = {}) {
   let time = 1000;
-  const server = createApp({ liveness: { random: () => 0, ...options, now: () => time } }).listen(0, '127.0.0.1');
+  const server = createApp({ liveness: { random: () => 0, ...options, now: () => time },
+    analyzer: syntheticAnalyzer, limiter }).listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const base = `http://127.0.0.1:${server.address().port}/api`;
-  const post = (path, body) => fetch(`${base}/${path}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  const post = (path, body, headers = {}) => fetch(`${base}/${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body)
   });
-  const enroll = (accountId = 'alice', value = 0) => post('templates', { accountId, descriptor: descriptor(value) });
+  const enroll = (accountId = 'alice', value = 0) => post('templates', {
+    accountId, frames: Array(3).fill(syntheticFrame({ descriptor: descriptor(value), landmarks: landmarks() }))
+  });
   const tokens = new Map();
   const create = async (accountId = 'alice') => {
     const response = await post('liveness/challenges', { accountId });
@@ -36,16 +47,26 @@ async function fixture(t, options = {}) {
     tokens.set(result.challengeId, result.sampleToken);
     return result;
   };
-  const sample = async (challengeId, body = { descriptor: descriptor(), landmarks: landmarks() }) => {
+  // Synthetic evidence (descriptor/landmarks) is wrapped into a frame, as the browser would send a JPEG.
+  const sample = async (challengeId, { descriptor: d = descriptor(), landmarks: l = landmarks(), ...rest } = {}) => {
     time += 200;
-    const response = await post(`liveness/challenges/${challengeId}/samples`, { sampleToken: tokens.get(challengeId), ...body });
+    const evidence = {};
+    if (d !== null) evidence.descriptor = d;
+    if (l !== null) evidence.landmarks = l;
+    const response = await post(`liveness/challenges/${challengeId}/samples`,
+      { sampleToken: tokens.get(challengeId), frame: syntheticFrame(evidence), ...rest });
     if (response.ok) {
       const result = await response.clone().json();
       if (result.sampleToken) tokens.set(challengeId, result.sampleToken);
     }
     return response;
   };
-  return { post, enroll, create, sample, advance: ms => { time += ms; },
+  const resume = async challengeId => {
+    const response = await post(`liveness/challenges/${challengeId}/resume`, { sampleToken: tokens.get(challengeId) });
+    if (response.ok) tokens.set(challengeId, (await response.clone().json()).sampleToken);
+    return response;
+  };
+  return { base, post, enroll, create, sample, resume, advance: ms => { time += ms; },
     cancel: id => fetch(`${base}/liveness/challenges/${id}`, { method: 'DELETE' }) };
 }
 
@@ -69,37 +90,52 @@ test('challenge creation requires a template and exact account-only schema; canc
   assert.equal((await f.sample(created.challengeId)).status, 404);
 });
 
-test('ordered identity-matched evidence completes a PoC sequence, consumes the challenge and never authenticates', async t => {
+test('ordered server-measured evidence completes the sequence, consumes the challenge and only then issues a session', async t => {
   const f = await fixture(t);
   await f.enroll();
   const { challengeId } = await f.create();
-  const steps = [{}, { closed: true }, {}, { turned: true }, {}];
+  // random() => 0 yields look_straight, then turn_left / center alternating (6 steps), each held for 2 samples.
+  const steps = [{}, { turned: true }, {}, { turned: true }, {}, { turned: true }];
   let result;
+  let cookie;
   for (const [index, pose] of steps.entries()) {
     for (let frame = 0; frame < 2; frame++) {
       const response = await f.sample(challengeId, { descriptor: descriptor(), landmarks: landmarks(pose) });
+      const last = index === steps.length - 1 && frame === 1;
       assert.equal(response.status, 200);
-      assert.equal(response.headers.get('set-cookie'), null);
       assert.equal(response.headers.get('cache-control'), 'no-store');
       assert.match(response.headers.get('content-security-policy'), /frame-ancestors 'none'/);
       result = await response.json();
-      assert.equal(result.authenticated, false);
-      assert.equal(result.liveness, 'UNVERIFIED_CLIENT_EVIDENCE');
-      assert.equal(result.sequencePassed, index === steps.length - 1 && frame === 1);
+      assert.equal(result.liveness, 'SERVER_MEASURED_CHALLENGE');
+      assert.equal(result.sequencePassed, last);
+      assert.equal(result.authenticated, last);
+      if (last) cookie = response.headers.get('set-cookie');
+      else assert.equal(response.headers.get('set-cookie'), null);
     }
     assert.equal(result.step, index + 1);
   }
   assert.equal(result.status, 'SEQUENCE_COMPLETE');
+  assert.equal(result.accountId, 'alice');
+  assert.ok(Number.isInteger(result.serverMs)); // server analysis time, shown in the UI
   assert.equal(result.distance, 0);
   assert.equal(result.sampleToken, undefined);
+  assert.match(cookie, /^sid=[\w-]{43}; HttpOnly; SameSite=Strict; Path=\//);
   assert.equal((await f.sample(challengeId)).status, 404);
+
+  const sid = cookie.split(';')[0];
+  const session = await fetch(`${f.base}/session`, { headers: { Cookie: sid } });
+  assert.equal(session.status, 200);
+  assert.equal((await session.json()).accountId, 'alice');
+  assert.equal((await fetch(`${f.base}/session`)).status, 401);
+  assert.equal((await f.post('logout', {}, { Cookie: sid })).status, 200);
+  assert.equal((await fetch(`${f.base}/session`, { headers: { Cookie: sid } })).status, 401);
 });
 
 test('a stationary open-eyed face cannot complete the sequence or skip to a head turn', async t => {
   const f = await fixture(t);
   await f.enroll();
   const { challengeId } = await f.create();
-  for (const pose of [{ turned: true }, { closed: true }, ...Array(12).fill({})]) {
+  for (const pose of [{ turned: true }, { tilted: true }, ...Array(12).fill({})]) {
     const response = await f.sample(challengeId, { descriptor: descriptor(), landmarks: landmarks(pose) });
     assert.equal(response.status, 200);
     const result = await response.json();
@@ -117,7 +153,7 @@ test('samples reject forged flags, alternate accounts and malformed evidence', a
   const bodies = [
     { ...valid, passed: true }, { ...valid, sequencePassed: true },
     { ...valid, authenticated: true }, { ...valid, accountId: 'bob' },
-    { ...valid, step: 5 }, { descriptor: descriptor() },
+    { ...valid, step: 5 }, { descriptor: descriptor(), landmarks: null }, { frame: 'data:image/png;base64,AAAA' },
     { ...valid, descriptor: descriptor().slice(1) },
     { ...valid, landmarks: landmarks().slice(1) },
     { ...valid, landmarks: invalidPoints },
@@ -130,12 +166,12 @@ test('samples reject forged flags, alternate accounts and malformed evidence', a
   }
 });
 
-test('sample requests retain the 8 KiB JSON limit', async t => {
+test('sample requests are limited to 1 MB of JSON', async t => {
   const f = await fixture(t);
   await f.enroll();
   const { challengeId } = await f.create();
   const response = await f.sample(challengeId, {
-    descriptor: descriptor(), landmarks: landmarks(), padding: 'x'.repeat(9000)
+    padding: 'x'.repeat(1_100_000)
   });
   assert.equal(response.status, 413);
   assert.equal((await response.json()).status, 'PAYLOAD_TOO_LARGE');
@@ -147,6 +183,10 @@ test('sample identity is checked against the server-bound account on every frame
   await f.enroll('bob', 1);
   const { challengeId } = await f.create('alice');
   assert.equal((await f.sample(challengeId)).status, 200);
+  const first = await f.sample(challengeId, { descriptor: descriptor(1), landmarks: landmarks() });
+  assert.equal((await first.json()).status, 'IDENTITY_RETRY');
+  assert.equal(first.headers.get('set-cookie'), null);
+  assert.equal((await f.resume(challengeId)).status, 200);
   const response = await f.sample(challengeId, { descriptor: descriptor(1), landmarks: landmarks() });
   assert.equal(response.status, 200);
   const result = await response.json();

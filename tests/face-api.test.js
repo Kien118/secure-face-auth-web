@@ -4,12 +4,17 @@ import { spawnSync } from 'node:child_process';
 import { createApp } from '../src/app.js';
 import { FaceEngine, validatePayload } from '../src/services/face-engine.js';
 import { readConfig } from '../src/config.js';
+import { syntheticAnalyzer, syntheticFrame } from './synthetic-analyzer.js';
 
 const vector = (value = 0) => Array(128).fill(value); // Synthetic numbers, no real biometrics.
 const payload = (accountId = 'alice', value = 0) => ({ accountId, descriptor: vector(value) });
+// HTTP bodies: the browser sends frames; the synthetic analyzer turns them back into these vectors.
+const frame = (value = 0) => syntheticFrame({ descriptor: vector(value), landmarks: [] });
+const enrollBody = (accountId = 'alice', value = 0) => ({ accountId, frames: [frame(value), frame(value), frame(value)] });
+const verifyBody = (accountId = 'alice', value = 0) => ({ accountId, frame: frame(value) });
 
 async function fixture(t, config = {}) {
-  const server = createApp(config).listen(0, '127.0.0.1');
+  const server = createApp({ analyzer: syntheticAnalyzer, ...config }).listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -30,21 +35,33 @@ test('backend starts, health and frontend/assets work with security headers', as
   assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(res.headers.get('cache-control'), 'no-store');
   assert.equal(res.headers.get('x-powered-by'), null);
-  for (const path of ['/', '/js/app.js', '/js/camera.js', '/js/face-client.js', '/js/workspace-ui.js', '/style.css', '/vendor/face-api.min.js']) {
+  for (const path of ['/', '/account.html', '/js/app.js', '/js/account.js', '/js/camera.js', '/js/face-client.js', '/js/workspace-ui.js', '/style.css', '/vendor/face-api.min.js']) {
     assert.equal((await fetch(base + path)).status, 200, path);
   }
   assert.equal((await fetch(base + '/.env')).status, 404);
 });
 
-test('reject missing, wrong-type, wrong-dimension and out-of-range descriptors', async t => {
+test('reject client-sent descriptors, malformed frames and bad account IDs', async t => {
   const { post } = await fixture(t);
-  for (const descriptor of [undefined, null, 'face', {}, [], vector().slice(1), [...vector(), 0],
-    vector().map(() => '0'), vector().map(() => 11)]) {
-    assert.equal((await post('templates', { accountId: 'alice', descriptor })).status, 400);
+  // The old protocol (client-computed descriptor) is no longer accepted at all.
+  assert.equal((await post('templates', payload())).status, 400);
+  assert.equal((await post('verify', payload())).status, 400);
+  for (const frames of [undefined, null, 'face', {}, [], [frame()], [frame(), frame()], Array(6).fill(frame()),
+    ['data:image/jpeg;base64,AAAA', frame(), frame()]]) {
+    assert.equal((await post('templates', { accountId: 'alice', frames })).status, 400);
+  }
+  for (const descriptor of [vector().slice(1), vector().map(() => 11)]) {
+    const bad = syntheticFrame({ descriptor });
+    assert.equal((await post('templates', { accountId: 'alice', frames: [bad, bad, bad] })).status, 400);
   }
   for (const accountId of ['', '../alice', 'a b', 'x'.repeat(65), {}, null]) {
-    assert.equal((await post('templates', { accountId, descriptor: vector() })).status, 400);
+    assert.equal((await post('templates', enrollBody(accountId))).status, 400);
   }
+  const none = syntheticFrame({ face: 'none' });
+  assert.equal((await post('templates', { accountId: 'alice', frames: [none, none, none] })).status, 422);
+  const inconsistent = await post('templates', { accountId: 'alice', frames: [frame(0), frame(0), frame(1)] });
+  assert.equal(inconsistent.status, 422);
+  assert.equal((await inconsistent.json()).status, 'INCONSISTENT_FRAMES');
 });
 
 test('an occupied port reports the startup problem without a secondary TypeError', async t => {
@@ -72,19 +89,20 @@ test('NaN and Infinity are rejected directly and as invalid or overflowing JSON'
 
 test('payload, content-type, query and cross-site limits fail safely', async t => {
   const { post } = await fixture(t);
-  assert.equal((await post('templates', { ...payload(), padding: 'x'.repeat(10000) })).status, 413);
-  assert.equal((await post('templates', payload(), { 'Content-Type': 'text/plain' })).status, 415);
-  assert.equal((await post('templates?descriptor=forbidden', payload())).status, 400);
-  assert.equal((await post('templates', payload(), { 'Sec-Fetch-Site': 'cross-site' })).status, 403);
+  assert.equal((await post('templates', { ...enrollBody(), padding: 'x'.repeat(1_100_000) })).status, 413);
+  assert.equal((await post('liveness/challenges', { accountId: 'alice', padding: 'x'.repeat(10000) })).status, 413);
+  assert.equal((await post('templates', enrollBody(), { 'Content-Type': 'text/plain' })).status, 415);
+  assert.equal((await post('templates?descriptor=forbidden', enrollBody())).status, 400);
+  assert.equal((await post('templates', enrollBody(), { 'Sec-Fetch-Site': 'cross-site' })).status, 403);
 });
 
 test('cannot force a match using client result flags', async t => {
   const { post } = await fixture(t);
-  await post('templates', payload());
-  for (const flag of ['matched', 'authenticated', 'distance', 'threshold', 'livenessPassed']) {
-    assert.equal((await post('verify', { ...payload('alice', 1), [flag]: true })).status, 400);
+  await post('templates', enrollBody());
+  for (const flag of ['matched', 'authenticated', 'distance', 'threshold', 'livenessPassed', 'descriptor']) {
+    assert.equal((await post('verify', { ...verifyBody('alice', 1), [flag]: true })).status, 400);
   }
-  const res = await post('verify', payload('alice', 1));
+  const res = await post('verify', verifyBody('alice', 1));
   const result = await res.json();
   assert.equal(result.matched, false);
   assert.equal(result.authenticated, false);
@@ -93,16 +111,16 @@ test('cannot force a match using client result flags', async t => {
 
 test('no template fails safely; enrollment and 1:1 distance match correctly', async t => {
   const { post } = await fixture(t);
-  assert.equal((await post('verify', payload())).status, 404);
-  assert.equal((await post('templates', payload())).status, 201);
-  const result = await (await post('verify', payload())).json();
+  assert.equal((await post('verify', verifyBody())).status, 404);
+  assert.equal((await post('templates', enrollBody())).status, 201);
+  const result = await (await post('verify', verifyBody())).json();
   assert.equal(result.distance, 0);
   assert.equal(result.matched, true);
   assert.equal(result.authenticated, false);
   assert.equal(result.liveness, 'NOT_IMPLEMENTED');
-  assert.equal((await post('verify', payload('bob'))).status, 404);
-  assert.equal((await post('templates', payload())).status, 409);
-  const mismatch = await (await post('verify', payload('alice', 0.1))).json();
+  assert.equal((await post('verify', verifyBody('bob'))).status, 404);
+  assert.equal((await post('templates', enrollBody())).status, 409);
+  const mismatch = await (await post('verify', verifyBody('alice', 0.1))).json();
   assert.ok(mismatch.distance > mismatch.threshold);
   assert.equal(mismatch.matched, false);
 });

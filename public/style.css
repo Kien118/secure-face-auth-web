@@ -132,8 +132,8 @@ progress::-moz-progress-bar { background:var(--green); border-radius:8px; }
 .checks-list li { display:flex; justify-content:space-between; gap:12px; font-size:12px; }
 .checks-list .check-label { color:var(--muted); }
 .checks-list .check-value { font-variant-numeric:tabular-nums; font-weight:500; }
-.check-value .pass { color:var(--green); }
-.check-value .fail { color:var(--red); }
+.check-value .pass { color:#16a34a; font-weight:700; }
+.check-value .fail { color:#dc2626; font-weight:700; }
 .metric-note { padding-top:12px; border-top:1px solid var(--line); font-size:9px; color:var(--muted); line-height:1.7; }
 .protocol-section { display:grid; grid-template-columns:1fr 1.8fr; gap:80px; margin:50px 0 42px; padding-top:34px; border-top:1px solid var(--line); }
 .protocol-intro h2 { font:28px/1.25 Georgia,serif; margin:10px 0; color:#3f5748; }
